@@ -1,0 +1,1 @@
+second brain + voice bot in python

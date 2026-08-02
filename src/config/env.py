@@ -12,6 +12,6 @@ def require_env(key: str):
     return value
 
 GITHUB_TOKEN = require_env("GITHUB_TOKEN") 
-
+API_KEY = require_env("API_KEY")
 
 

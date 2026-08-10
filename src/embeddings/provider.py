@@ -10,7 +10,18 @@ class EmbeddingProvider:
         return vector.tolist() 
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        vectors = self.model.encode(texts, convert_to_numpy=True) 
-        return vectors.tolist() 
+        vectors = self.model.encode(texts, convert_to_numpy=True)
+        return vectors.tolist()
+
+
+_embedder = None
+
+def get_embedder() -> EmbeddingProvider:
+    """Shared instance -- loading the model takes a few seconds, so both the sync
+    and the query path reuse the same one."""
+    global _embedder
+    if _embedder is None:
+        _embedder = EmbeddingProvider()
+    return _embedder
 
      

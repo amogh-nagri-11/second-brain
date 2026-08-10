@@ -1,45 +1,57 @@
-import numpy as np 
-from datetime import datetime 
-from dateutil import parser as date_parser 
+import numpy as np
+from dateutil import parser as date_parser
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float: 
-    # np.linalg.norm(a) -> returs the totla geometric length of each vector using pythogoras theorem  
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    # np.linalg.norm(a) -> returs the totla geometric length of each vector using pythogoras theorem
     # formula for cosine similarity = (a . b) / (||a||*||b||)
-    return float(np.dot(a,b) / (np.linalg.norm(a) * np.linalg.norm(b))) 
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    if denom == 0:
+        return 0.0
+    return float(np.dot(a, b) / denom)
 
-def time_diff_hours(ts1: str, ts2: str) -> float: 
-    t1 = date_parser.parse(ts1) 
-    t2 = date_parser.parse(ts2) 
-    return abs((t1-t2).total_seconds())/3600
+def time_diff_hours(ts1: str, ts2: str) -> float:
+    return abs(_epoch_hours(ts1) - _epoch_hours(ts2))
+
+def _epoch_hours(ts: str) -> float:
+    # calendar all-day events come back as bare dates (naive), commits as ISO with
+    # offsets (aware) -- going through .timestamp() keeps the two comparable
+    return date_parser.parse(ts).timestamp() / 3600.0
+
+def _unit_embeddings(records: list[dict]) -> np.ndarray:
+    matrix = np.stack([np.asarray(r["embedding"], dtype=np.float32) for r in records])
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return matrix / norms
 
 def link_entities(
-        records: list[dict], 
-        simlarity_threshold: float = 0.5, 
+        records: list[dict],
+        similarity_threshold: float = 0.2,
         time_window_hours: float = 48.0,
-) -> list[list[dict]]: 
-    clusters: list[list[dict]] = [] 
-    assigned = set()
+) -> list[list[dict]]:
+    if not records:
+        return []
 
-    for i, record in enumerate(records): 
-        if record["id"] in assigned: 
-            continue 
+    # pairwise similarity in one matmul instead of a python loop per pair
+    unit = _unit_embeddings(records)
+    similarity = unit @ unit.T
 
-        cluster = [record]
-        assigned.add(record["id"]) 
+    hours = np.array([_epoch_hours(r["timestamp"]) for r in records])
+    time_gap = np.abs(hours[:, None] - hours[None, :])
 
-        for j, other in enumerate(records): 
-            if i==j or other["id"] in assigned: 
-                continue 
+    eligible = (similarity >= similarity_threshold) & (time_gap <= time_window_hours)
+    np.fill_diagonal(eligible, False)
 
-            sim = cosine_similarity(record["embedding"], other["embedding"]) 
-            time_gap = time_diff_hours(record["timestamp"], other["timestamp"]) 
+    clusters: list[list[dict]] = []
+    assigned = np.zeros(len(records), dtype=bool)
 
-            if sim>=simlarity_threshold and time_gap<=time_window_hours: 
-                cluster.append([other]) 
-                assigned.add(other["id"])
+    for i in range(len(records)):
+        if assigned[i]:
+            continue
 
-        clusters.append(cluster) 
+        assigned[i] = True
+        members = np.flatnonzero(eligible[i] & ~assigned)
+        assigned[members] = True
 
-    return clusters 
+        clusters.append([records[i]] + [records[j] for j in members])
 
-
+    return clusters

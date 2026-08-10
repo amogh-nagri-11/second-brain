@@ -1,28 +1,40 @@
-from src.embeddings.provider import EmbeddingProvider 
-from src.storage.db import get_connection, load_all_records 
-from src.entities.linking import link_entities
-from src.retrieval.search import search 
+from src.embeddings.provider import get_embedder
+from src.storage.db import get_clusters_version, get_connection, load_clusters
+from src.retrieval.search import search
 from src.synthesis.answer import synthesize_answer
 
-_embedder = None 
+# clusters only change when a sync runs, so keep them in memory and re-read
+# only when the stored version counter moves
+_cluster_cache: tuple[int, list[list[dict]]] | None = None
 
-def get_embedder(): 
-    global _embedder 
-    if _embedder is None: 
-        _embedder = EmbeddingProvider()  
-    return _embedder 
+def get_clusters(conn) -> list[list[dict]]:
+    global _cluster_cache
 
-def get_answer(query_text: str) -> str: 
-    conn = get_connection() 
-    records = load_all_records(conn) 
-    clusters = link_entities(records) 
+    version = get_clusters_version(conn)
+    if _cluster_cache is None or _cluster_cache[0] != version:
+        _cluster_cache = (version, load_clusters(conn))
 
-    embedder = get_embedder() 
-    query_embedding = embedder.embed(query_text) 
+    return _cluster_cache[1]
 
-    results = search(query_embedding, query_text, clusters) 
-    if not results: 
+def invalidate_cluster_cache():
+    global _cluster_cache
+    _cluster_cache = None
+
+def get_answer(query_text: str) -> str:
+    conn = get_connection()
+    try:
+        clusters = get_clusters(conn)
+    finally:
+        conn.close()
+
+    if not clusters:
+        return "I haven't ingested anything yet"
+
+    query_embedding = get_embedder().embed(query_text)
+
+    results = search(query_embedding, query_text, clusters)
+    if not results:
         return "I don't have anything relating to that yet"
 
-    top_cluster, _ = results[0] 
-    return synthesize_answer(query_text, top_cluster) 
+    top_cluster, _ = results[0]
+    return synthesize_answer(query_text, top_cluster)

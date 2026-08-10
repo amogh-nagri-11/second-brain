@@ -1,32 +1,31 @@
-from datetime import timezone, timedelta, datetime
-from src.ingestion.github import fetch_recent_commits 
-from src.ingestion.calendar import fetch_recent_events
-from src.embeddings.provider import EmbeddingsProvider 
-from src.storage.db import get_connection, save_record 
+"""Manual sync entry point: python -m src.ingest_all
 
-def main(): 
-    import os
-    print("DB path:", os.path.abspath("second_brain.db"))       
+Incremental by default -- pass --full to re-fetch and re-embed everything from
+scratch (useful after changing the embedding model).
+"""
 
-    since = datetime.now(timezone.utc) - timedelta(days=90) 
+import os
+import sys
 
-    github_records = fetch_recent_commits("amogh-nagri-11", "second-brain", since) 
-    cal_records = fetch_recent_events(since) 
-    all_records = github_records + cal_records 
+from src.storage.db import DB_PATH, get_connection
+from src.sync import run_sync
 
-    print(f"Ingested {len(all_records)} total records") 
 
-    embeddor = EmbeddingsProvider() 
-    conn = get_connection() 
+def main():
+    print("DB path:", os.path.abspath(DB_PATH))
 
-    for record in all_records: 
-        text_to_embed = f"{record.title}\n{record.body}" 
-        embedding = embeddor.embed(text_to_embed) 
-        save_record(conn, record, embedding) 
-        print(f"stored + embedded {record.title}")
+    conn = get_connection()
+    try:
+        if "--full" in sys.argv:
+            print("Full re-ingest: clearing sync cursors and stored records")
+            conn.execute("DELETE FROM sync_state")
+            conn.execute("DELETE FROM activity_records")
+            conn.commit()
 
-    conn.close() 
+        run_sync(conn)
+    finally:
+        conn.close()
 
-if __name__ == "__main__": 
+
+if __name__ == "__main__":
     main()
-

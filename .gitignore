@@ -6,3 +6,4 @@ credentials.json
 token.json
 *.db
 second_brain.db
+temp_recording.wav

@@ -29,6 +29,8 @@ def synthesize_answer(query: str, cluster: list[dict], model: str = 'openai/gpt-
 
     prompt = f"""You are answering a question about the user's own recent activity, based only on the records below. Be concise and conversational, like a quick spoken summary — not a report.
 
+This answer is read aloud, so length is expensive. Keep it to two or three sentences, under about 60 words. If the question asks how many or how often, count the matching records one at a time before you answer, then give just the number -- counting badly is worse than being long. If it asks you to list or name things, give one short line per item and nothing else. Never write headings or a closing summary.
+
 Records:
 {context}
 

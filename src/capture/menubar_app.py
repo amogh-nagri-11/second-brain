@@ -1,3 +1,4 @@
+import atexit
 import rumps
 import threading
 import time
@@ -20,7 +21,8 @@ class SecondBrainApp(rumps.App):
         self.transcriber = Transcriber() 
         self.speaker = Speaker()
         self.is_Recording = False
-        self.menu = ["Start/Stop Recording", "Sync Now"]
+        self.menu = ["Start/Stop Recording", "Sync Now", "Stop Speaking"]
+        atexit.register(self.speaker.stop)
 
         #listener for keyboard shortcut
         listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
@@ -32,6 +34,8 @@ class SecondBrainApp(rumps.App):
 
     def _start_recording(self): 
         if not self.is_Recording: 
+            # asking the next question is itself a request to stop hearing the last answer
+            self.speaker.stop()
             self.recorder.start() 
             self.is_Recording = True 
             self.icon = "icons/recording.png" 
@@ -59,6 +63,10 @@ class SecondBrainApp(rumps.App):
         else: 
             self._stop_recording()
             sender.title = "Start/Stop Recording" 
+
+    @rumps.clicked("Stop Speaking")
+    def stop_speaking(self, sender):
+        self.speaker.stop()
 
     @rumps.clicked("Sync Now")
     def sync_now(self, sender):

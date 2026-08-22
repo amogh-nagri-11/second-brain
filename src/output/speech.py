@@ -55,6 +55,11 @@ def to_speech(text: str) -> str:
     if not text:
         return ""
 
+    # models emit non-breaking hyphens and typographic quotes; fold them to ASCII
+    # first, otherwise a date written with U+2011 slips past ISO_DATE and gets read
+    # out as three numbers
+    text = text.replace("\u2011", "-").replace("\u2010", "-").replace("\u2019", "'")
+
     text = ISO_DATE.sub(_spoken_date, text)
     text = EMOJI.sub(" ", text)
 
@@ -67,7 +72,6 @@ def to_speech(text: str) -> str:
 
     # dashes used as punctuation should sound like a pause, not be read aloud
     text = re.sub(r"\s*[—–]\s*", ", ", text)
-    text = text.replace("‑", "-").replace("’", "'")
 
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{2,}", "\n", text)

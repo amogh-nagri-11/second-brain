@@ -88,10 +88,13 @@ Question: {query}"""
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        # gpt-oss reasons before it answers, and those tokens come out of the same
-        # budget -- too low a cap gets spent entirely on reasoning and returns empty
-        # content rather than a short answer, and there are two answers to fit now
-        max_tokens=2000,
+        # gpt-oss reasons before it answers out of this same budget. Asking for two
+        # answers pushed it far enough that a whole 2000-token budget could go to
+        # reasoning and come back with empty content, so the reasoning is capped
+        # rather than the cap simply raised -- raising it alone would blow the
+        # free tier's 8k tokens-per-minute limit instead.
+        max_tokens=2500,
+        reasoning_effort="low",
     )
 
     return _split(response.choices[0].message.content)

@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Brain</title>
+<style>
+  :root {
+    --bg: #05070d;
+    --panel: rgba(18, 24, 40, 0.72);
+    --line: rgba(120, 190, 255, 0.16);
+    --text: #dbe6f5;
+    --muted: #7b8ba6;
+    --cyan: #35e6ff;
+    --violet: #9d7bff;
+    --warn: #ffb43a;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* ambient field ------------------------------------------------------- */
+  .field {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(60vw 50vh at 15% -10%, rgba(53,230,255,.13), transparent 70%),
+      radial-gradient(50vw 45vh at 95% 5%, rgba(157,123,255,.13), transparent 70%);
+  }
+  .grid {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .35;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: radial-gradient(circle at 50% 0%, #000 0%, transparent 72%);
+    -webkit-mask-image: radial-gradient(circle at 50% 0%, #000 0%, transparent 72%);
+  }
+
+  .wrap {
+    position: relative; z-index: 1;
+    max-width: 860px; margin: 0 auto; padding: 34px 22px 90px;
+  }
+
+  /* header -------------------------------------------------------------- */
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+
+  .mark {
+    width: 34px; height: 34px; flex: none; border-radius: 10px;
+    background: linear-gradient(140deg, var(--cyan), var(--violet));
+    box-shadow: 0 0 22px rgba(53,230,255,.4);
+  }
+
+  h1 {
+    margin: 0; font-size: 17px; font-weight: 600; letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  h1 small { display: block; font-size: 11px; letter-spacing: .22em; color: var(--muted); font-weight: 500; }
+
+  .pills { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+    background: rgba(255,255,255,.02); white-space: nowrap;
+  }
+  .pill.on   { color: var(--cyan);  border-color: rgba(53,230,255,.5);  box-shadow: 0 0 16px rgba(53,230,255,.18); }
+  .pill.busy { color: var(--warn);  border-color: rgba(255,180,58,.45); }
+
+  /* console ------------------------------------------------------------- */
+  .console {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); backdrop-filter: blur(14px);
+    padding: 16px; margin-bottom: 20px;
+  }
+
+  .row { display: flex; gap: 10px; align-items: stretch; }
+
+  textarea {
+    flex: 1; resize: none; min-height: 52px; max-height: 180px;
+    background: rgba(4,8,16,.7); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 15px; font: inherit; outline: none;
+  }
+  textarea:focus { border-color: rgba(53,230,255,.55); box-shadow: 0 0 0 3px rgba(53,230,255,.1); }
+  textarea::placeholder { color: #4d5c73; }
+
+  button {
+    font: inherit; color: var(--text); cursor: pointer;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(255,255,255,.03); padding: 0 16px;
+    transition: border-color .15s, box-shadow .15s, color .15s;
+  }
+  button:hover:not(:disabled) { border-color: rgba(53,230,255,.55); color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .primary {
+    border-color: transparent; color: #04121a; font-weight: 600;
+    background: linear-gradient(120deg, var(--cyan), var(--violet));
+    box-shadow: 0 0 22px rgba(53,230,255,.25);
+  }
+  .primary:hover:not(:disabled) { color: #04121a; }
+
+  .mic { width: 52px; display: grid; place-items: center; font-size: 17px; padding: 0; }
+  .mic.live {
+    border-color: rgba(255,90,120,.65); color: #ff7590;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(255,90,120,.34); }
+    50%     { box-shadow: 0 0 0 9px rgba(255,90,120,0); }
+  }
+
+  .hint { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  kbd {
+    font: 11px ui-monospace, SFMono-Regular, monospace;
+    border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 5px; color: var(--text);
+  }
+
+  /* answer -------------------------------------------------------------- */
+  .answer {
+    border: 1px solid var(--line); border-left: 2px solid var(--cyan);
+    border-radius: var(--radius); background: var(--panel);
+    backdrop-filter: blur(14px); padding: 20px 22px; margin-bottom: 18px;
+  }
+  .heard {
+    font: 12px ui-monospace, SFMono-Regular, monospace;
+    color: var(--cyan); letter-spacing: .04em; margin-bottom: 14px;
+    word-break: break-word;
+  }
+  .heard span { color: var(--muted); }
+
+  .body p  { margin: 0 0 10px; }
+  .body ul { margin: 0; padding-left: 18px; }
+  .body li { margin-bottom: 7px; }
+  .body strong { color: #fff; }
+
+  .tools { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .tools button { padding: 7px 13px; font-size: 13px; }
+
+  .thinking { display: flex; align-items: center; gap: 11px; color: var(--muted); }
+  .dots { display: inline-flex; gap: 4px; }
+  .dots i {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--cyan);
+    animation: blink 1.2s infinite ease-in-out;
+  }
+  .dots i:nth-child(2) { animation-delay: .18s; }
+  .dots i:nth-child(3) { animation-delay: .36s; }
+  @keyframes blink { 0%,80%,100% { opacity: .18; } 40% { opacity: 1; } }
+
+  .empty { color: var(--muted); }
+
+  /* history ------------------------------------------------------------- */
+  h2 {
+    font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--muted); margin: 26px 0 10px; font-weight: 600;
+  }
+  .item {
+    width: 100%; text-align: left; display: flex; gap: 12px; align-items: baseline;
+    padding: 11px 14px; margin-bottom: 7px; border-radius: 10px;
+    background: rgba(255,255,255,.02);
+  }
+  .item time { font: 11px ui-monospace, monospace; color: var(--muted); flex: none; }
+  .item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .err {
+    border: 1px solid rgba(255,120,120,.4); color: #ff9c9c;
+    border-radius: 10px; padding: 11px 14px; margin-bottom: 16px; font-size: 14px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="grid"></div>
+
+<div class="wrap">
+  <header>
+    <div class="mark"></div>
+    <h1>Second Brain<small>local recall</small></h1>
+    <div class="pills">
+      <span class="pill" id="p-speak">idle</span>
+      <span class="pill" id="p-sync">sync —</span>
+    </div>
+  </header>
+
+  <div id="error"></div>
+
+  <div class="console">
+    <div class="row">
+      <textarea id="q" rows="1" placeholder="Ask about your commits, meetings, anything you've done…"></textarea>
+      <button class="mic" id="mic" title="Record a question">●</button>
+      <button class="primary" id="ask">Ask</button>
+    </div>
+    <div class="hint">
+      <span><kbd>⌘</kbd> <kbd>↵</kbd> to ask</span>
+      <span><kbd>F9</kbd> to speak instead</span>
+      <span id="rec-hint"></span>
+    </div>
+  </div>
+
+  <div class="answer" id="answer">
+    <div class="empty">Nothing asked yet.</div>
+  </div>
+
+  <h2>Earlier</h2>
+  <div id="history"></div>
+</div>
+
+<script>
+let pending = false;
+let lastKey = null;
+let recording = false;
+
+const $ = id => document.getElementById(id);
+
+/* the written answer is markdown-ish: bullets and bold, nothing more */
+function render(text) {
+  const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const bold = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  const out = [];
+  let list = null;
+
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const bullet = line.match(/^[-*•]\s+(.*)$/);
+    if (bullet) {
+      list = list || [];
+      list.push('<li>' + bold(bullet[1]) + '</li>');
+    } else {
+      if (list) { out.push('<ul>' + list.join('') + '</ul>'); list = null; }
+      out.push('<p>' + bold(line.replace(/^#{1,6}\s*/, '')) + '</p>');
+    }
+  }
+  if (list) out.push('<ul>' + list.join('') + '</ul>');
+  return out.join('');
+}
+
+function showThinking() {
+  $('answer').innerHTML =
+    '<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> working through your records…</div>';
+}
+
+function showAnswer(entry) {
+  if (!entry) {
+    $('answer').innerHTML = '<div class="empty">Nothing asked yet.</div>';
+    return;
+  }
+  $('answer').innerHTML =
+    '<div class="heard"><span>heard:</span> ' +
+      entry.question.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) +
+    '</div>' +
+    '<div class="body">' + render(entry.written || entry.spoken) + '</div>' +
+    '<div class="tools">' +
+      '<button id="copy">Copy for docs</button>' +
+      '<button id="again">Speak again</button>' +
+    '</div>';
+
+  $('copy').onclick = async () => {
+    await navigator.clipboard.writeText(entry.written || entry.spoken);
+    $('copy').textContent = 'Copied';
+    setTimeout(() => ($('copy').textContent = 'Copy for docs'), 1400);
+  };
+  $('again').onclick = () => post('/api/replay', { index: 0 });
+}
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  return res.json();
+}
+
+async function ask() {
+  const question = $('q').value.trim();
+  if (!question || pending) return;
+
+  pending = true;
+  $('ask').disabled = true;
+  $('q').value = '';
+  showThinking();
+  $('error').innerHTML = '';
+
+  try {
+    const entry = await post('/api/ask', { question });
+    showAnswer(entry);
+    lastKey = entry.asked_at;
+  } catch (err) {
+    $('error').innerHTML = '<div class="err">' + err.message + '</div>';
+    showAnswer(null);
+  } finally {
+    pending = false;
+    $('ask').disabled = false;
+  }
+}
+
+$('ask').onclick = ask;
+$('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); ask(); }
+});
+$('mic').onclick = async () => {
+  recording = !recording;
+  await post('/api/record', { recording });
+};
+
+async function tick() {
+  try {
+    const s = await fetch('/api/state').then(r => r.json());
+
+    $('p-speak').textContent = s.speaking ? 'speaking' : (s.recording ? 'listening' : 'idle');
+    $('p-speak').className = 'pill' + (s.speaking || s.recording ? ' on' : '');
+
+    $('p-sync').textContent = s.syncing ? 'syncing…' : 'sync ' + s.last_sync;
+    $('p-sync').className = 'pill' + (s.syncing ? ' busy' : '');
+
+    recording = s.recording;
+    $('mic').className = 'mic' + (s.recording ? ' live' : '');
+    $('rec-hint').textContent = s.recording ? 'listening — click ● to stop' : '';
+
+    // an answer can arrive from the hotkey while this page is open
+    const latest = s.history[0];
+    if (!pending && latest && latest.asked_at !== lastKey) {
+      showAnswer(latest);
+      lastKey = latest.asked_at;
+    }
+
+    $('history').innerHTML = s.history.slice(1).map((h, i) =>
+      '<button class="item" data-i="' + (i + 1) + '">' +
+        '<time>' + h.at + '</time><span>' + h.question + '</span>' +
+      '</button>'
+    ).join('') || '<div class="empty">Nothing earlier yet.</div>';
+
+    for (const el of document.querySelectorAll('.item')) {
+      el.onclick = () => post('/api/replay', { index: Number(el.dataset.i) });
+    }
+  } catch (e) { /* app stopped; the next tick will pick it back up */ }
+}
+
+tick();
+setInterval(tick, 1000);
+$('q').focus();
+</script>
+</body>
+</html>

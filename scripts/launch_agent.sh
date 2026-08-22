@@ -83,15 +83,30 @@ $keepalive
 PLIST_EOF
 }
 
-load_agent() {
-    # bootout is asynchronous: bootstrapping while the old job is still going away
-    # fails with "Input/output error", so wait for it to actually be gone
-    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+# bootout is asynchronous, and bootstrapping while the old job is still going away
+# fails with "Input/output error" -- so wait for it to disappear, then retry a few
+# times anyway, because "gone from print" and "gone from launchd" are not the same
+# instant
+bootstrap_agent() {
     for _ in $(seq 20); do
         is_loaded || break
         sleep 0.25
     done
-    launchctl bootstrap "$DOMAIN" "$PLIST"
+
+    for attempt in $(seq 8); do
+        if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
+            return 0
+        fi
+        is_loaded && return 0
+        sleep 0.5
+    done
+
+    die "could not bootstrap $LABEL -- try '$0 stop' and then '$0 start'"
+}
+
+load_agent() {
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    bootstrap_agent
 }
 
 install_agent() {
@@ -115,7 +130,7 @@ install_agent() {
 
 start_agent() {
     [ -f "$PLIST" ] || die "not installed -- run '$0 install' first"
-    is_loaded || launchctl bootstrap "$DOMAIN" "$PLIST"
+    is_loaded || bootstrap_agent
     launchctl kickstart "$DOMAIN/$LABEL"
     echo "started. the menubar icon should appear within a second or two."
 }

@@ -1,6 +1,7 @@
 import atexit
 import re
 import rumps
+import webbrowser
 import textwrap
 import threading
 import time
@@ -11,6 +12,7 @@ from src.output.speaker import Speaker
 from src.pipeline import get_answer, invalidate_cluster_cache
 from src.synthesis.answer import Answer
 from src.sync import run_sync
+from src.ui.server import UIServer
 
 from pynput import keyboard
 
@@ -100,6 +102,9 @@ class SecondBrainApp(rumps.App):
         self._last_sync_at: float | None = None
         self._syncing = False
 
+        self.ui = UIServer(self)
+        self.ui.start()
+
         self._build_items()
         self._owns_quit_button = False
         self._rebuild_menu()
@@ -120,6 +125,7 @@ class SecondBrainApp(rumps.App):
     def _build_items(self):
         """The long-lived items. These are re-added on every rebuild rather than
         recreated, so the references and callbacks here stay valid."""
+        self._window_item = rumps.MenuItem("Open Window", callback=self.open_window)
         self._record_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
         # greyed out until there is something to stop
         self._speaking_item = rumps.MenuItem("Not Speaking")
@@ -141,6 +147,7 @@ class SecondBrainApp(rumps.App):
 
         self.menu.clear()
 
+        self.menu["window"] = self._window_item
         self.menu["record"] = self._record_item
         self.menu["speaking"] = self._speaking_item
         self.menu["sep-answer"] = rumps.separator
@@ -269,6 +276,59 @@ class SecondBrainApp(rumps.App):
         if response.clicked == 2:
             pyperclip.copy(response.text)
 
+    def open_window(self, sender):
+        webbrowser.open(self.ui.url)
+
+    def ui_state(self) -> dict:
+        """Everything the page polls for, in one round trip."""
+        with self._state_lock:
+            history = list(self._history)
+            syncing, last_sync = self._syncing, self._last_sync_at
+
+        return {
+            "speaking": self.speaker.is_speaking,
+            "recording": self.is_Recording,
+            "syncing": syncing,
+            "last_sync": _ago(last_sync),
+            "history": [
+                {
+                    "asked_at": asked_at,
+                    "at": time.strftime("%H:%M", time.localtime(asked_at)),
+                    "question": question,
+                    "spoken": answer.spoken,
+                    "written": answer.written,
+                }
+                for asked_at, question, answer in history
+            ],
+        }
+
+    def ask_text(self, question: str) -> dict:
+        """A typed question takes the same path as a spoken one, minus the mic."""
+        entry = self._answer_question(question)
+        return {
+            "asked_at": entry[0],
+            "at": time.strftime("%H:%M", time.localtime(entry[0])),
+            "question": entry[1],
+            "spoken": entry[2].spoken,
+            "written": entry[2].written,
+        }
+
+    def replay_index(self, index: int):
+        self._replay(index)
+
+    def _answer_question(self, query_text: str) -> tuple[float, str, Answer]:
+        answer = get_answer(query_text)
+        print(f"Answer: {answer.spoken}")
+
+        # the clipboard gets the written form -- that's the one you paste somewhere
+        pyperclip.copy(answer.written or answer.spoken)
+        rumps.notification("Second Brain", query_text, answer.spoken)
+        self._remember(query_text, answer)
+        self.speaker.speak(answer.spoken)
+
+        with self._state_lock:
+            return self._history[0]
+
     def _remember(self, question: str, answer: Answer):
         with self._state_lock:
             self._history.insert(0, (time.time(), question, answer))
@@ -348,15 +408,7 @@ class SecondBrainApp(rumps.App):
     def _process(self, audio_path: str):
         query_text = self.transcriber.transcribe(audio_path)
         print(f"You asked: {query_text}")
-
-        answer = get_answer(query_text) 
-        print(f"Answer: {answer.spoken}") 
-
-        # the clipboard gets the written form -- that's the one you paste somewhere
-        pyperclip.copy(answer.written or answer.spoken)
-        rumps.notification("Second Brain", query_text, answer.spoken) 
-        self._remember(query_text, answer)
-        self.speaker.speak(answer.spoken)
+        self._answer_question(query_text)
 
 if __name__ == "__main__":
     SecondBrainApp().run()

@@ -66,3 +66,32 @@ def search(
 
 
     
+
+def score_records(
+    query_embedding: np.ndarray,
+    query_text: str,
+    records: list[dict],
+    now: datetime | None = None,
+) -> list[tuple[dict, float]]:
+    """Rank individual records, not clusters.
+
+    Clustering groups things that happened together, which is what makes a topical
+    answer coherent -- but it also means a question whose matches are scattered
+    across many small clusters only ever sees the few clusters that rank, and
+    answers "how many" from a fraction of them. Scoring records directly is what
+    makes a count come out right; the caller still folds in cluster context.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    scored = [
+        (
+            record,
+            (0.7 * cosine_similarity(query_embedding, record["embedding"]))
+            + (0.15 * keyword_overlap_score(query_text, [record]))
+            + (0.15 * recency_score([record], now)),
+        )
+        for record in records
+    ]
+
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    return scored

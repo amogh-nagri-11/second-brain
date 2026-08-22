@@ -22,9 +22,19 @@ def _trim(body: str) -> str:
 
 
 def format_cluster_from_prompt(cluster: list[dict]) -> str:
+    """Best-ranked records carry their text; the rest are one line each.
+
+    Counting needs to see every match, and a title with a date is enough to be
+    counted -- spending the token budget on bodies for all of them would mean
+    showing far fewer records and getting the count wrong instead.
+    """
     lines = []
     for r in cluster:
-        lines.append(f"- [{r['source']}] {r['title']} ({r['timestamp']})\n {_trim(r['body'])}")
+        header = f"- [{r['source']}] {r['title']} ({r['timestamp']})"
+        if r.get("detailed", True) and r["body"].strip():
+            lines.append(f"{header}\n {_trim(r['body'])}")
+        else:
+            lines.append(header)
     return "\n".join(lines)
 
 @dataclass
@@ -73,7 +83,7 @@ def synthesize_answer(query: str, cluster: list[dict], model: str = 'openai/gpt-
 Answer twice, in two forms, using these exact markers and nothing else:
 
 SPOKEN:
-This is read aloud, so length is expensive. Two or three sentences, under about 60 words, conversational. Plain text only -- no markdown, no bullets, no headings. If the question asks how many or how often, count the matching records one at a time first, then say just the number and leave the dates to the written version.
+This is read aloud, so length is expensive. Two or three sentences, under about 60 words, conversational. Plain text only -- no markdown, no bullets, no headings. If the question asks how many or how often, count the matching records one at a time first, then say just the number and leave the dates to the written version. Every record is a separate occurrence: two that look almost identical are two, not one, and none may be skipped or merged.
 
 WRITTEN:
 The same answer formatted to be pasted into a document or an email. Open with one short line saying what it covers, then bullet points. Markdown is fine. Include the detail the spoken version had to leave out, and list every matching record rather than a sample, but stay factual and stick to the records -- no greeting, no sign-off, no invented context.
@@ -95,6 +105,8 @@ Question: {query}"""
         # free tier's 8k tokens-per-minute limit instead.
         max_tokens=2500,
         reasoning_effort="low",
+        # counting the same records twice should give the same answer twice
+        temperature=0,
     )
 
     return _split(response.choices[0].message.content)

@@ -93,7 +93,7 @@ bootstrap_agent() {
         sleep 0.25
     done
 
-    for attempt in $(seq 8); do
+    for attempt in $(seq 24); do
         if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
             return 0
         fi
@@ -147,7 +147,20 @@ stop_agent() {
     # bootout rather than a signal: it stops the process and unloads the job, so
     # nothing brings it back until you ask
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-    echo "stopped."
+
+    # and wait for it to actually be gone. There are ML models to tear down, so
+    # returning early leaves a following 'start' racing a process that still holds
+    # the port -- which looked exactly like start silently doing nothing
+    for _ in $(seq 60); do
+        pgrep -f "src.capture.menubar_app" >/dev/null || break
+        sleep 0.25
+    done
+
+    if pgrep -f "src.capture.menubar_app" >/dev/null; then
+        echo "stopped (a process is still winding down)."
+    else
+        echo "stopped."
+    fi
 }
 
 uninstall_agent() {

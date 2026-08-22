@@ -24,17 +24,22 @@ def _repo_has_activity_since(repo, since: datetime) -> bool:
 MAX_BRANCHES_PER_REPO = 40
 
 
-def _commit_record(repo, commit) -> ActivityRecord:
+def _commit_record(repo, commit, branch: str) -> ActivityRecord:
     message = commit.commit.message
     subject = message.split("\n")[0] if message else message
+
+    # branches are walked default-first and deduped by sha, so anything still tagged
+    # with a topic branch has not landed yet -- that is the part worth seeing in the
+    # title. Commits on the default branch stay unadorned.
+    label = repo.name if branch == repo.default_branch else f"{repo.name} [{branch}]"
 
     return ActivityRecord(
         id=f"github:commit:{commit.sha}",
         source="github",
         # repo name is the main thing distinguishing one commit from another
         # once several repos share the store, so it belongs in the embedded text
-        title=f"{repo.name}: {subject}",
-        body=f"{repo.full_name}\n\n{message}",
+        title=f"{label}: {subject}",
+        body=f"{repo.full_name} ({branch})\n\n{message}",
         timestamp=commit.commit.author.date.isoformat(),
         url=commit.html_url,
         raw=commit.raw_data,
@@ -66,7 +71,7 @@ def _repo_commits(repo, username: str, since: datetime) -> list[ActivityRecord]:
                 if commit.sha in seen:
                     continue
                 seen.add(commit.sha)
-                records.append(_commit_record(repo, commit))
+                records.append(_commit_record(repo, commit, branch))
         except GithubException as error:
             # empty repos 409, and a branch can vanish between listing and reading
             print(f"[github] skipped {repo.full_name}@{branch}: {error.data.get('message', error)}")

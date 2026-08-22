@@ -1,5 +1,14 @@
+from datetime import datetime, timezone
+
 import numpy as np 
+from dateutil import parser as date_parser
+
 from src.entities.linking import cosine_similarity 
+
+# how fast a cluster's score decays with age: at one half-life old it contributes
+# half the recency term. Long enough that a topical match from months ago still
+# ranks, short enough that "latest" and "last" mean something.
+RECENCY_HALF_LIFE_DAYS = 45
 
 def cluster_embedding(cluster: list[dict]) -> np.ndarray: 
     embeddings = np.stack([r['embedding'] for r in cluster])
@@ -14,19 +23,42 @@ def keyword_overlap_score(query: str, cluster: list[dict]) -> float:
     overlap = query_words & cluster_words 
     return len(overlap)/len(query_words) 
 
+def _newest(cluster: list[dict]) -> datetime:
+    """All-day calendar events carry a bare date and commits a tz-aware timestamp,
+    so both get normalised before they are compared."""
+    moments = []
+    for record in cluster:
+        moment = date_parser.parse(record["timestamp"])
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        moments.append(moment)
+    return max(moments)
+
+
+def recency_score(cluster: list[dict], now: datetime) -> float:
+    age_days = max((now - _newest(cluster)).total_seconds() / 86400, 0.0)
+    return 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)
+
+
 def search(
     query_embedding: np.ndarray, 
     query_text: str, 
     clusters: list[list[dict]], 
     top_k: int = 3, 
 ) -> list[tuple[list[dict], float]]:
+    now = datetime.now(timezone.utc)
+
     scored = [] 
     for cluster in clusters: 
         cluster_vec = cluster_embedding(cluster) 
         semantic_vec = cosine_similarity(query_embedding, cluster_vec) 
         keyword_score = keyword_overlap_score(query_text, cluster) 
+        # without this nothing in the ranking knows what "latest" means, and a
+        # question about the newest commit can be answered from months-old ones
+        # that happened to embed slightly closer
+        recency = recency_score(cluster, now)
 
-        combined_score = (0.8 * semantic_vec) + (0.2 * keyword_score) 
+        combined_score = (0.7 * semantic_vec) + (0.15 * keyword_score) + (0.15 * recency)
         scored.append((cluster, combined_score)) 
 
     scored.sort(key=lambda x: x[1], reverse=True) 

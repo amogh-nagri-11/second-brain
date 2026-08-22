@@ -131,6 +131,14 @@ install_agent() {
 start_agent() {
     [ -f "$PLIST" ] || die "not installed -- run '$0 install' first"
     is_loaded || bootstrap_agent
+
+    # bootstrap returning does not mean the service is registered yet, and
+    # kickstarting too early fails with "Could not find service"
+    for _ in $(seq 20); do
+        is_loaded && break
+        sleep 0.25
+    done
+
     launchctl kickstart "$DOMAIN/$LABEL"
     echo "started. the menubar icon should appear within a second or two."
 }

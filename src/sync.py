@@ -5,7 +5,6 @@ instead of re-fetching and re-embedding the whole history. Clusters are rebuilt
 here (once per sync) rather than on every question.
 """
 
-import os
 from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as date_parser
@@ -24,9 +23,6 @@ from src.storage.db import (
     set_last_synced_at,
 )
 
-GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "amogh-nagri-11")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "second-brain")
-
 # how far back to look the very first time a source is synced
 INITIAL_LOOKBACK_DAYS = 90
 # re-scan a little before the last sync: calendar events get edited after creation,
@@ -44,7 +40,7 @@ def _since_for(conn, source: str) -> datetime:
 def _fetch(conn, source: str) -> list:
     since = _since_for(conn, source)
     if source == "github":
-        return fetch_recent_commits(GITHUB_OWNER, GITHUB_REPO, since)
+        return fetch_recent_commits(since)
     return fetch_recent_events(since)
 
 

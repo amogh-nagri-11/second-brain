@@ -15,7 +15,9 @@ from src.sync import run_sync
 from pynput import keyboard
 
 HOTKEY = keyboard.Key.f9
-SYNC_INTERVAL_SECONDS = 30 * 60
+# the sources move a few times a day at most, so half-hourly polling was buying
+# nothing for 48 network wake-ups a day
+SYNC_INTERVAL_SECONDS = 60 * 60
 # how many past questions stay in the Recent submenu
 MAX_HISTORY = 8
 # the menu is rebuilt on a timer rather than from the worker threads, so AppKit is

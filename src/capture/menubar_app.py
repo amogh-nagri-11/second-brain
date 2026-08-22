@@ -19,6 +19,7 @@ MAX_HISTORY = 8
 # only ever touched from the main thread
 MENU_REFRESH_SECONDS = 1
 RECENT_TITLE_CHARS = 45
+TRANSCRIPT_SEPARATOR = "\n\n" + "-" * 52 + "\n\n"
 
 
 def _ago(moment: float | None) -> str:
@@ -49,7 +50,8 @@ class SecondBrainApp(rumps.App):
         self.speaker = Speaker()
         self.is_Recording = False
 
-        self._history: list[tuple[str, str]] = []
+        # newest first: (asked_at, question, answer)
+        self._history: list[tuple[float, str, str]] = []
         self._history_version = 0
         self._rendered_history_version = -1
         self._state_lock = threading.Lock()
@@ -74,6 +76,7 @@ class SecondBrainApp(rumps.App):
         # greyed out until there is something to stop
         self._speaking_item = rumps.MenuItem("Not Speaking")
         self._recent_item = rumps.MenuItem("Recent")
+        self._transcript_item = rumps.MenuItem("Show Transcript…", callback=self.show_transcript)
         self._sync_item = rumps.MenuItem("Sync Now", callback=self.sync_now)
 
         self.menu = [
@@ -81,6 +84,7 @@ class SecondBrainApp(rumps.App):
             self._speaking_item,
             rumps.separator,
             self._recent_item,
+            self._transcript_item,
             rumps.separator,
             self._sync_item,
         ]
@@ -123,7 +127,7 @@ class SecondBrainApp(rumps.App):
             self._recent_item.add(empty)
             return
 
-        for index, (question, _answer) in enumerate(history):
+        for index, (_asked_at, question, _answer) in enumerate(history):
             item = rumps.MenuItem(
                 _shorten(question),
                 callback=lambda sender, i=index: self._replay(i),
@@ -135,15 +139,49 @@ class SecondBrainApp(rumps.App):
         with self._state_lock:
             if index >= len(self._history):
                 return
-            question, answer = self._history[index]
+            _asked_at, question, answer = self._history[index]
 
         pyperclip.copy(answer)
         rumps.notification("Second Brain", question, answer)
         self.speaker.speak(answer)
 
+    def show_transcript(self, sender):
+        """What it heard and what it said back.
+
+        The menu can show a question but not the transcription next to the answer it
+        produced, which is what you need when the answer is confusing and you can't
+        tell whether it misheard you or just reasoned badly.
+        """
+        with self._state_lock:
+            history = list(self._history)
+
+        if history:
+            text = TRANSCRIPT_SEPARATOR.join(
+                f"[{time.strftime('%d %b %H:%M', time.localtime(asked_at))}]\n"
+                f"heard: {question}\n\n{answer}"
+                for asked_at, question, answer in history
+            )
+        else:
+            text = "Nothing asked yet.\n\nHold F9 (or use Start Recording) and ask a question."
+
+        window = rumps.Window(
+            title="Second Brain",
+            message="Recent questions, as they were transcribed.",
+            default_text=text,
+            ok="Close",
+            dimensions=(520, 340),
+        )
+        window.add_button("Copy")
+
+        response = window.run()
+        # the extra button lands after ok; the field is editable, so copy what's
+        # actually in it rather than what we put there
+        if response.clicked == 2:
+            pyperclip.copy(response.text)
+
     def _remember(self, question: str, answer: str):
         with self._state_lock:
-            self._history.insert(0, (question, answer))
+            self._history.insert(0, (time.time(), question, answer))
             del self._history[MAX_HISTORY:]
             self._history_version += 1
 

@@ -22,7 +22,8 @@ def main():
         print(f"  [{r['source']}] {r['title']}")
 
     answer = synthesize_answer(query, top_cluster)
-    print(f"\nAnswer: {answer}")
+    print(f"\nSpoken: {answer.spoken}")
+    print(f"\nWritten:\n{answer.written}")
 
 if __name__ == "__main__":
     main()

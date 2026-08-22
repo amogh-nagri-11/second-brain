@@ -1,5 +1,7 @@
 import atexit
+import re
 import rumps
+import textwrap
 import threading
 import time
 import pyperclip
@@ -7,6 +9,7 @@ from src.capture.recorder import Recorder
 from src.capture.transcriber import Transcriber
 from src.output.speaker import Speaker
 from src.pipeline import get_answer, invalidate_cluster_cache
+from src.synthesis.answer import Answer
 from src.sync import run_sync
 
 from pynput import keyboard
@@ -20,6 +23,10 @@ MAX_HISTORY = 8
 MENU_REFRESH_SECONDS = 1
 RECENT_TITLE_CHARS = 45
 TRANSCRIPT_SEPARATOR = "\n\n" + "-" * 52 + "\n\n"
+
+# the answer is shown in the dropdown itself, one menu row per wrapped line
+ANSWER_WIDTH = 62
+MAX_ANSWER_LINES = 18
 
 
 def _ago(moment: float | None) -> str:
@@ -42,6 +49,39 @@ def _shorten(text: str, limit: int = RECENT_TITLE_CHARS) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
+def _answer_lines(written: str) -> list[str]:
+    """Wrap the written answer into menu rows.
+
+    Bold markers and heading hashes are dropped -- they mean nothing in a menu and
+    just add noise -- but the bullets stay, since they are what makes a list
+    readable at a glance.
+    """
+    lines: list[str] = []
+
+    for raw in written.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+
+        raw = re.sub(r"\*\*(.+?)\*\*", r"\1", raw)
+        raw = re.sub(r"^#{1,6}\s*", "", raw)
+
+        wrapped = textwrap.wrap(raw, ANSWER_WIDTH, subsequent_indent="    ") or [raw]
+        for line in wrapped:
+            if len(lines) >= MAX_ANSWER_LINES:
+                lines.append("…  (use Copy for Docs for the rest)")
+                return lines
+            lines.append(line)
+
+    return lines
+
+
+def _disabled(title: str) -> rumps.MenuItem:
+    item = rumps.MenuItem(title)
+    item.set_callback(None)
+    return item
+
+
 class SecondBrainApp(rumps.App): 
     def __init__(self): 
         super().__init__("", icon = 'icons/idle.png', quit_button="Quit", template=True) 
@@ -50,15 +90,19 @@ class SecondBrainApp(rumps.App):
         self.speaker = Speaker()
         self.is_Recording = False
 
-        # newest first: (asked_at, question, answer)
-        self._history: list[tuple[float, str, str]] = []
+        # newest first: (asked_at, question, Answer)
+        self._history: list[tuple[float, str, Answer]] = []
         self._history_version = 0
         self._rendered_history_version = -1
         self._state_lock = threading.Lock()
         self._last_sync_at: float | None = None
         self._syncing = False
 
-        self._build_menu()
+        self._build_items()
+        self._owns_quit_button = False
+        self._rebuild_menu()
+        # from here on the menu is ours to rebuild, quit button included
+        self._owns_quit_button = True
         atexit.register(self.speaker.stop)
 
         #listener for keyboard shortcut
@@ -71,23 +115,58 @@ class SecondBrainApp(rumps.App):
 
         rumps.Timer(self._refresh_menu, MENU_REFRESH_SECONDS).start()
 
-    def _build_menu(self):
+    def _build_items(self):
+        """The long-lived items. These are re-added on every rebuild rather than
+        recreated, so the references and callbacks here stay valid."""
         self._record_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
         # greyed out until there is something to stop
         self._speaking_item = rumps.MenuItem("Not Speaking")
+        self._copy_item = rumps.MenuItem("Copy for Docs", callback=self.copy_written)
         self._recent_item = rumps.MenuItem("Recent")
         self._transcript_item = rumps.MenuItem("Show Transcript…", callback=self.show_transcript)
         self._sync_item = rumps.MenuItem("Sync Now", callback=self.sync_now)
 
-        self.menu = [
-            self._record_item,
-            self._speaking_item,
-            rumps.separator,
-            self._recent_item,
-            self._transcript_item,
-            rumps.separator,
-            self._sync_item,
-        ]
+    def _rebuild_menu(self):
+        """Rebuild the whole dropdown, latest answer included.
+
+        Keys are explicit because two wrapped lines can read identically and the menu
+        is a dict keyed by title -- a duplicate would silently drop the second one.
+        Only called when the answer actually changed; the per-second refresh just
+        retitles the few items that move.
+        """
+        with self._state_lock:
+            history = list(self._history)
+
+        self.menu.clear()
+
+        self.menu["record"] = self._record_item
+        self.menu["speaking"] = self._speaking_item
+        self.menu["sep-answer"] = rumps.separator
+
+        if history:
+            _asked_at, question, answer = history[0]
+            self.menu["heard"] = _disabled(f"heard: {_shorten(question, ANSWER_WIDTH)}")
+            self.menu["sep-heard"] = rumps.separator
+            for index, line in enumerate(_answer_lines(answer.written or answer.spoken)):
+                self.menu[f"ans-{index}"] = _disabled(line)
+            self.menu["copy"] = self._copy_item
+        else:
+            self.menu["heard"] = _disabled("Nothing asked yet — hold F9 to ask")
+
+        self.menu["sep-nav"] = rumps.separator
+        self.menu["recent"] = self._recent_item
+        self.menu["transcript"] = self._transcript_item
+        self.menu["sep-sync"] = rumps.separator
+        self.menu["sync"] = self._sync_item
+
+        # rumps appends the quit button itself when run() is called, and its add()
+        # always calls addItem_ -- the duplicate check runs against a sentinel, not
+        # the real key -- so having it here first makes run() throw "already is in
+        # another menu". Leave it out of the first build and put it back on every
+        # rebuild after that, or clear() would take away the only way to quit.
+        if self._owns_quit_button and self.quit_button is not None:
+            self.menu[self.quit_button.title] = self.quit_button
+
         self._render_recent()
 
     def _refresh_menu(self, _timer):
@@ -107,9 +186,8 @@ class SecondBrainApp(rumps.App):
         self._sync_item.title = "Syncing…" if syncing else f"Sync Now (last: {_ago(last_sync)})"
         self._sync_item.set_callback(None if syncing else self.sync_now)
 
-        # rebuilding a submenu is cheap but not free; only do it when it changed
         if version != self._rendered_history_version:
-            self._render_recent()
+            self._rebuild_menu()
             self._rendered_history_version = version
 
     def _render_recent(self):
@@ -122,9 +200,7 @@ class SecondBrainApp(rumps.App):
             history = list(self._history)
 
         if not history:
-            empty = rumps.MenuItem("Nothing asked yet")
-            empty.set_callback(None)
-            self._recent_item.add(empty)
+            self._recent_item.add(_disabled("Nothing asked yet"))
             return
 
         for index, (_asked_at, question, _answer) in enumerate(history):
@@ -134,6 +210,18 @@ class SecondBrainApp(rumps.App):
             )
             self._recent_item.add(item)
 
+    def _latest(self) -> tuple[float, str, Answer] | None:
+        with self._state_lock:
+            return self._history[0] if self._history else None
+
+    def copy_written(self, sender):
+        latest = self._latest()
+        if latest is None:
+            return
+        _asked_at, _question, answer = latest
+        pyperclip.copy(answer.written or answer.spoken)
+        rumps.notification("Second Brain", "Copied", "The written answer is on your clipboard.")
+
     def _replay(self, index: int):
         """Re-speak an earlier answer and put it back on the clipboard."""
         with self._state_lock:
@@ -141,16 +229,16 @@ class SecondBrainApp(rumps.App):
                 return
             _asked_at, question, answer = self._history[index]
 
-        pyperclip.copy(answer)
-        rumps.notification("Second Brain", question, answer)
-        self.speaker.speak(answer)
+        pyperclip.copy(answer.written or answer.spoken)
+        rumps.notification("Second Brain", question, answer.spoken)
+        self.speaker.speak(answer.spoken)
 
     def show_transcript(self, sender):
         """What it heard and what it said back.
 
-        The menu can show a question but not the transcription next to the answer it
-        produced, which is what you need when the answer is confusing and you can't
-        tell whether it misheard you or just reasoned badly.
+        The menu shows the latest answer, this shows the ones before it, which is
+        what you need when an answer is confusing and you can't tell whether it
+        misheard the question or just reasoned badly.
         """
         with self._state_lock:
             history = list(self._history)
@@ -158,7 +246,7 @@ class SecondBrainApp(rumps.App):
         if history:
             text = TRANSCRIPT_SEPARATOR.join(
                 f"[{time.strftime('%d %b %H:%M', time.localtime(asked_at))}]\n"
-                f"heard: {question}\n\n{answer}"
+                f"heard: {question}\n\n{answer.written or answer.spoken}"
                 for asked_at, question, answer in history
             )
         else:
@@ -179,7 +267,7 @@ class SecondBrainApp(rumps.App):
         if response.clicked == 2:
             pyperclip.copy(response.text)
 
-    def _remember(self, question: str, answer: str):
+    def _remember(self, question: str, answer: Answer):
         with self._state_lock:
             self._history.insert(0, (time.time(), question, answer))
             del self._history[MAX_HISTORY:]
@@ -260,12 +348,13 @@ class SecondBrainApp(rumps.App):
         print(f"You asked: {query_text}")
 
         answer = get_answer(query_text) 
-        print(f"Answer: {answer}") 
+        print(f"Answer: {answer.spoken}") 
 
-        pyperclip.copy(answer)
-        rumps.notification("Second Brain", query_text, answer) 
+        # the clipboard gets the written form -- that's the one you paste somewhere
+        pyperclip.copy(answer.written or answer.spoken)
+        rumps.notification("Second Brain", query_text, answer.spoken) 
         self._remember(query_text, answer)
-        self.speaker.speak(answer)
+        self.speaker.speak(answer.spoken)
 
 if __name__ == "__main__":
     SecondBrainApp().run()

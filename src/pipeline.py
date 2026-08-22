@@ -5,7 +5,7 @@ from dateutil import parser as date_parser
 from src.embeddings.provider import get_embedder
 from src.storage.db import get_clusters_version, get_connection, load_clusters
 from src.retrieval.search import search
-from src.synthesis.answer import synthesize_answer
+from src.synthesis.answer import Answer, synthesize_answer
 
 # how many of the ranked clusters feed the answer. Anything that spans separate
 # occasions -- "how many times", "list every" -- lands in several singleton clusters
@@ -63,7 +63,7 @@ def _context_records(results) -> list[dict]:
     return records
 
 
-def get_answer(query_text: str) -> str:
+def get_answer(query_text: str) -> Answer:
     conn = get_connection()
     try:
         clusters = get_clusters(conn)
@@ -71,12 +71,12 @@ def get_answer(query_text: str) -> str:
         conn.close()
 
     if not clusters:
-        return "I haven't ingested anything yet"
+        return Answer(spoken="I haven't ingested anything yet", written="")
 
     query_embedding = get_embedder().embed(query_text)
 
     results = search(query_embedding, query_text, clusters, top_k=TOP_K_CLUSTERS)
     if not results:
-        return "I don't have anything relating to that yet"
+        return Answer(spoken="I don't have anything relating to that yet", written="")
 
     return synthesize_answer(query_text, _context_records(results))

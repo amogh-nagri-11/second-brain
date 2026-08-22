@@ -1,3 +1,6 @@
+import re
+from dataclasses import dataclass
+
 from openai import OpenAI
 from src.config.env import API_KEY
 
@@ -24,27 +27,71 @@ def format_cluster_from_prompt(cluster: list[dict]) -> str:
         lines.append(f"- [{r['source']}] {r['title']} ({r['timestamp']})\n {_trim(r['body'])}")
     return "\n".join(lines)
 
-def synthesize_answer(query: str, cluster: list[dict], model: str = 'openai/gpt-oss-120b') -> str:
+@dataclass
+class Answer:
+    """One answer in its two forms.
+
+    What sounds right read aloud and what reads well pasted into a doc are not the
+    same text -- speech wants short and unpunctuated by structure, a document wants
+    dates, bullets and enough detail to stand on its own.
+    """
+
+    spoken: str
+    written: str
+
+    def __str__(self) -> str:
+        return self.spoken
+
+
+SPOKEN_RE = re.compile(r"SPOKEN:\s*(.*?)(?=\n\s*WRITTEN:|\Z)", re.S)
+WRITTEN_RE = re.compile(r"WRITTEN:\s*(.*)", re.S)
+
+
+def _split(reply: str) -> Answer:
+    spoken = SPOKEN_RE.search(reply)
+    written = WRITTEN_RE.search(reply)
+
+    # if the model ignored the markers, the whole reply is better than nothing in
+    # both slots
+    if not spoken and not written:
+        return Answer(spoken=reply.strip(), written=reply.strip())
+
+    spoken_text = spoken.group(1).strip() if spoken else ""
+    written_text = written.group(1).strip() if written else ""
+
+    return Answer(
+        spoken=spoken_text or written_text,
+        written=written_text or spoken_text,
+    )
+
+
+def synthesize_answer(query: str, cluster: list[dict], model: str = 'openai/gpt-oss-120b') -> Answer:
     context = format_cluster_from_prompt(cluster)
 
-    prompt = f"""You are answering a question about the user's own recent activity, based only on the records below. Be concise and conversational, like a quick spoken summary — not a report.
+    prompt = f"""You are answering a question about the user's own recent activity, based only on the records below.
 
-This answer is read aloud, so length is expensive. Keep it to two or three sentences, under about 60 words. If the question asks how many or how often, count the matching records one at a time before you answer, then give just the number -- counting badly is worse than being long. If it asks you to list or name things, give one short line per item and nothing else. Never write headings or a closing summary.
+Answer twice, in two forms, using these exact markers and nothing else:
+
+SPOKEN:
+This is read aloud, so length is expensive. Two or three sentences, under about 60 words, conversational. Plain text only -- no markdown, no bullets, no headings. If the question asks how many or how often, count the matching records one at a time first, then say just the number and leave the dates to the written version.
+
+WRITTEN:
+The same answer formatted to be pasted into a document or an email. Open with one short line saying what it covers, then bullet points. Markdown is fine. Include the detail the spoken version had to leave out, and list every matching record rather than a sample, but stay factual and stick to the records -- no greeting, no sign-off, no invented context.
+
+Write dates the way a person would in a document: "21 Aug 2026", or "21 Aug 2026, 3:40 pm" when the time matters. Never paste a raw timestamp like 2026-08-21T10:09:02+00:00.
 
 Records:
 {context}
 
-Question: {query}
-
-Answer:"""
+Question: {query}"""
 
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         # gpt-oss reasons before it answers, and those tokens come out of the same
         # budget -- too low a cap gets spent entirely on reasoning and returns empty
-        # content rather than a short answer
-        max_tokens=1500,
+        # content rather than a short answer, and there are two answers to fit now
+        max_tokens=2000,
     )
 
-    return response.choices[0].message.content
+    return _split(response.choices[0].message.content)

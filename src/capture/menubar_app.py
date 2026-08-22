@@ -13,6 +13,33 @@ from pynput import keyboard
 
 HOTKEY = keyboard.Key.f9
 SYNC_INTERVAL_SECONDS = 30 * 60
+# how many past questions stay in the Recent submenu
+MAX_HISTORY = 8
+# the menu is rebuilt on a timer rather than from the worker threads, so AppKit is
+# only ever touched from the main thread
+MENU_REFRESH_SECONDS = 1
+RECENT_TITLE_CHARS = 45
+
+
+def _ago(moment: float | None) -> str:
+    if moment is None:
+        return "never"
+    seconds = int(time.time() - moment)
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
+def _shorten(text: str, limit: int = RECENT_TITLE_CHARS) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
 
 class SecondBrainApp(rumps.App): 
     def __init__(self): 
@@ -21,7 +48,15 @@ class SecondBrainApp(rumps.App):
         self.transcriber = Transcriber() 
         self.speaker = Speaker()
         self.is_Recording = False
-        self.menu = ["Start/Stop Recording", "Sync Now", "Stop Speaking"]
+
+        self._history: list[tuple[str, str]] = []
+        self._history_version = 0
+        self._rendered_history_version = -1
+        self._state_lock = threading.Lock()
+        self._last_sync_at: float | None = None
+        self._syncing = False
+
+        self._build_menu()
         atexit.register(self.speaker.stop)
 
         #listener for keyboard shortcut
@@ -31,6 +66,86 @@ class SecondBrainApp(rumps.App):
         # one sync at a time, whether triggered by the timer or the menu
         self._sync_lock = threading.Lock()
         threading.Thread(target=self._sync_loop, daemon=True).start()
+
+        rumps.Timer(self._refresh_menu, MENU_REFRESH_SECONDS).start()
+
+    def _build_menu(self):
+        self._record_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
+        # greyed out until there is something to stop
+        self._speaking_item = rumps.MenuItem("Not Speaking")
+        self._recent_item = rumps.MenuItem("Recent")
+        self._sync_item = rumps.MenuItem("Sync Now", callback=self.sync_now)
+
+        self.menu = [
+            self._record_item,
+            self._speaking_item,
+            rumps.separator,
+            self._recent_item,
+            rumps.separator,
+            self._sync_item,
+        ]
+        self._render_recent()
+
+    def _refresh_menu(self, _timer):
+        """Runs on the main thread, so it is the only place the menu is mutated."""
+        self._record_item.title = "Stop Recording" if self.is_Recording else "Start Recording"
+
+        if self.speaker.is_speaking:
+            self._speaking_item.title = "● Speaking — click to stop"
+            self._speaking_item.set_callback(self.stop_speaking)
+        else:
+            self._speaking_item.title = "Not Speaking"
+            self._speaking_item.set_callback(None)
+
+        with self._state_lock:
+            syncing, last_sync, version = self._syncing, self._last_sync_at, self._history_version
+
+        self._sync_item.title = "Syncing…" if syncing else f"Sync Now (last: {_ago(last_sync)})"
+        self._sync_item.set_callback(None if syncing else self.sync_now)
+
+        # rebuilding a submenu is cheap but not free; only do it when it changed
+        if version != self._rendered_history_version:
+            self._render_recent()
+            self._rendered_history_version = version
+
+    def _render_recent(self):
+        # the submenu's NSMenu is created lazily on first add(), and clear() blows up
+        # on the None it starts as -- so only clear once something is actually in it
+        if len(self._recent_item):
+            self._recent_item.clear()
+
+        with self._state_lock:
+            history = list(self._history)
+
+        if not history:
+            empty = rumps.MenuItem("Nothing asked yet")
+            empty.set_callback(None)
+            self._recent_item.add(empty)
+            return
+
+        for index, (question, _answer) in enumerate(history):
+            item = rumps.MenuItem(
+                _shorten(question),
+                callback=lambda sender, i=index: self._replay(i),
+            )
+            self._recent_item.add(item)
+
+    def _replay(self, index: int):
+        """Re-speak an earlier answer and put it back on the clipboard."""
+        with self._state_lock:
+            if index >= len(self._history):
+                return
+            question, answer = self._history[index]
+
+        pyperclip.copy(answer)
+        rumps.notification("Second Brain", question, answer)
+        self.speaker.speak(answer)
+
+    def _remember(self, question: str, answer: str):
+        with self._state_lock:
+            self._history.insert(0, (question, answer))
+            del self._history[MAX_HISTORY:]
+            self._history_version += 1
 
     def _start_recording(self): 
         if not self.is_Recording: 
@@ -55,20 +170,15 @@ class SecondBrainApp(rumps.App):
         if key==HOTKEY and self.is_Recording: 
             self._stop_recording()
 
-    @rumps.clicked("Start/Stop Recording") 
     def toggle_recording(self, sender): 
         if not self.is_Recording: 
             self._start_recording() 
-            sender.title = "Stop Recording"
         else: 
             self._stop_recording()
-            sender.title = "Start/Stop Recording" 
 
-    @rumps.clicked("Stop Speaking")
     def stop_speaking(self, sender):
         self.speaker.stop()
 
-    @rumps.clicked("Sync Now")
     def sync_now(self, sender):
         threading.Thread(target=self._sync, args=(True,), daemon=True).start()
 
@@ -83,10 +193,15 @@ class SecondBrainApp(rumps.App):
         if not self._sync_lock.acquire(blocking=False):
             return
 
+        with self._state_lock:
+            self._syncing = True
+
         try:
             result = run_sync()
             if result["changed"]:
                 invalidate_cluster_cache()
+            with self._state_lock:
+                self._last_sync_at = time.time()
             if notify:
                 rumps.notification(
                     "Second Brain",
@@ -98,6 +213,8 @@ class SecondBrainApp(rumps.App):
             if notify:
                 rumps.notification("Second Brain", "Sync failed", str(error))
         finally:
+            with self._state_lock:
+                self._syncing = False
             self._sync_lock.release()
 
     def _process(self, audio_path: str):
@@ -109,8 +226,8 @@ class SecondBrainApp(rumps.App):
 
         pyperclip.copy(answer)
         rumps.notification("Second Brain", query_text, answer) 
+        self._remember(query_text, answer)
         self.speaker.speak(answer)
 
 if __name__ == "__main__":
     SecondBrainApp().run()
-

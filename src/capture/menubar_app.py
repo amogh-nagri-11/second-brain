@@ -303,8 +303,14 @@ class SecondBrainApp(rumps.App):
         }
 
     def ask_text(self, question: str) -> dict:
-        """A typed question takes the same path as a spoken one, minus the mic."""
-        entry = self._answer_question(question)
+        """A typed question takes the same path as a spoken one, minus the mic.
+
+        Nothing is spoken: you typed because you were somewhere you couldn't talk,
+        and the page is showing the answer anyway. The notification and the
+        clipboard grab are skipped for the same reason -- the window already has
+        the text and a copy button.
+        """
+        entry = self._answer_question(question, speak=False, announce=False)
         return {
             "asked_at": entry[0],
             "at": time.strftime("%H:%M", time.localtime(entry[0])),
@@ -316,15 +322,21 @@ class SecondBrainApp(rumps.App):
     def replay_index(self, index: int):
         self._replay(index)
 
-    def _answer_question(self, query_text: str) -> tuple[float, str, Answer]:
+    def _answer_question(
+        self, query_text: str, speak: bool = True, announce: bool = True
+    ) -> tuple[float, str, Answer]:
         answer = get_answer(query_text)
         print(f"Answer: {answer.spoken}")
 
-        # the clipboard gets the written form -- that's the one you paste somewhere
-        pyperclip.copy(answer.written or answer.spoken)
-        rumps.notification("Second Brain", query_text, answer.spoken)
+        if announce:
+            # the clipboard gets the written form -- that's the one you paste somewhere
+            pyperclip.copy(answer.written or answer.spoken)
+            rumps.notification("Second Brain", query_text, answer.spoken)
+
         self._remember(query_text, answer)
-        self.speaker.speak(answer.spoken)
+
+        if speak:
+            self.speaker.speak(answer.spoken)
 
         with self._state_lock:
             return self._history[0]

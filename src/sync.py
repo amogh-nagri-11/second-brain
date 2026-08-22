@@ -25,9 +25,12 @@ from src.storage.db import (
 
 # how far back to look the very first time a source is synced
 INITIAL_LOOKBACK_DAYS = 90
-# re-scan a little before the last sync: calendar events get edited after creation,
-# and it costs nothing since unchanged records are skipped before embedding
-OVERLAP_HOURS = 24
+# re-scan a window before the last sync rather than starting exactly where we left off.
+# GitHub filters commits by commit date, not push date, so work committed locally and
+# pushed days later lands *behind* the cursor and would otherwise be missed forever.
+# A week covers realistic push lag; calendar events also get edited after creation.
+# Costs nothing either way since unchanged records are skipped before embedding.
+OVERLAP_HOURS = 24 * 7
 
 
 def _since_for(conn, source: str) -> datetime:

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-m</string>
+        <string>src.capture.menubar_app</string>
+    </array>
+
+    <!-- credentials.json, token.json, second-brain.db and icons/ are all resolved
+         relative to the working directory, so this has to be the repo root -->
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- restart if it crashes, but respect Quit from the menu: a clean exit stays
+         exited until the next login -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__WORKDIR__/logs/menubar.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__WORKDIR__/logs/menubar.err.log</string>
+</dict>
+</plist>

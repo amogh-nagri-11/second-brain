@@ -8,3 +8,5 @@ token.json
 second_brain.db
 temp_recording.wav
 logs/
+.DS_Store
+.claude/

@@ -7,6 +7,7 @@ import threading
 import time
 import pyperclip
 from src.capture.recorder import SAMPLE_RATE, Recorder
+from src.config.paths import ICONS_DIR
 from src.capture.transcriber import Transcriber
 from src.output.speaker import Speaker
 from src.pipeline import get_answer, invalidate_cluster_cache
@@ -26,6 +27,8 @@ MAX_HISTORY = 8
 # only ever touched from the main thread
 MENU_REFRESH_SECONDS = 1
 RECENT_TITLE_CHARS = 45
+IDLE_ICON = str(ICONS_DIR / "idle.png")
+RECORDING_ICON = str(ICONS_DIR / "recording.png")
 # anything shorter is a key tap, not a question
 MIN_QUESTION_SAMPLES = SAMPLE_RATE // 2
 TRANSCRIPT_SEPARATOR = "\n\n" + "-" * 52 + "\n\n"
@@ -90,7 +93,7 @@ def _disabled(title: str) -> rumps.MenuItem:
 
 class SecondBrainApp(rumps.App): 
     def __init__(self): 
-        super().__init__("", icon = 'icons/idle.png', quit_button="Quit", template=True) 
+        super().__init__("", icon=IDLE_ICON, quit_button="Quit", template=True) 
         self.recorder = Recorder() 
         self.transcriber = Transcriber() 
         self.speaker = Speaker()
@@ -355,12 +358,12 @@ class SecondBrainApp(rumps.App):
             self.speaker.stop()
             self.recorder.start() 
             self.is_Recording = True 
-            self.icon = "icons/recording.png" 
+            self.icon = RECORDING_ICON
 
     def _stop_recording(self): 
         if self.is_Recording: 
             self.is_Recording = False 
-            self.icon = "icons/idle.png" 
+            self.icon = IDLE_ICON
             audio = self.recorder.stop()
             threading.Thread(target=self._process, args=(audio,)).start()
 

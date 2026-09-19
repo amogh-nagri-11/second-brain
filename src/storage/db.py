@@ -2,10 +2,10 @@ import sqlite3
 import json
 import numpy as np
 
-DB_PATH="second-brain.db"
+from src.config.paths import db_path
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path())
     conn.execute("""
         CREATE TABLE IF NOT EXISTS activity_records (
             id TEXT PRIMARY KEY,

@@ -1,28 +1,32 @@
-import os
-
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from src.config.paths import google_client_path, google_token_path
+
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 
-TOKEN_PATH = "token.json"
-CREDENTIALS_PATH = "credentials.json"
 
 
 def _load_saved_credentials() -> Credentials | None:
-    if not os.path.exists(TOKEN_PATH):
+    token_path = google_token_path()
+    if not token_path.exists():
         return None
     try:
-        return Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        return Credentials.from_authorized_user_file(str(token_path), SCOPES)
     except (ValueError, GoogleAuthError):
         # corrupt or written under different scopes -- treat as no token at all
         return None
 
 
 def _run_consent_flow() -> Credentials:
-    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+    client_path = google_client_path()
+    if not client_path.exists():
+        raise FileNotFoundError(
+            f"Google Calendar isn't set up: put your OAuth desktop client at {client_path}"
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(google_client_path()), SCOPES)
     # access_type=offline is what gets us a refresh_token back; prompt=consent forces
     # Google to reissue one even when it thinks we already have a valid grant
     return flow.run_local_server(port=0, access_type="offline", prompt="consent")
@@ -46,7 +50,7 @@ def get_calendar_credentials() -> Credentials:
     else:
         creds = _run_consent_flow()
 
-    with open(TOKEN_PATH, "w") as token:
+    with open(google_token_path(), "w") as token:
         token.write(creds.to_json())
 
     return creds

@@ -4,15 +4,15 @@ Incremental by default -- pass --full to re-fetch and re-embed everything from
 scratch (useful after changing the embedding model).
 """
 
-import os
 import sys
 
-from src.storage.db import DB_PATH, get_connection
+from src.config.paths import db_path
+from src.storage.db import get_connection
 from src.sync import run_sync
 
 
 def main():
-    print("DB path:", os.path.abspath(DB_PATH))
+    print("DB path:", db_path())
 
     conn = get_connection()
     try:

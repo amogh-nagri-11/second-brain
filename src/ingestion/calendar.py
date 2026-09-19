@@ -74,4 +74,6 @@ def fetch_recent_events(since: datetime) -> list[ActivityRecord]:
         older = _list_events(service, until - timedelta(days=FALLBACK_LOOKBACK_DAYS), since)
         events = older[-FALLBACK_LIMIT:]
 
-    return [_to_record(event) for event in events]
+    # a cancelled occurrence is gone as far as questions go; leaving it out lets the
+    # sync mark it deleted along with anything removed outright
+    return [_to_record(event) for event in events if event.get("status") != "cancelled"]

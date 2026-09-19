@@ -317,6 +317,45 @@ def mark_deleted(conn: sqlite3.Connection, item_ids: list[str]):
         conn.executemany("DELETE FROM items_fts WHERE item_id = ?", [(i,) for i in item_ids])
 
 
+def live_ids_between(conn: sqlite3.Connection, source: str, start: str, end: str) -> set[str]:
+    """Ids of a source's items, not deleted, that happened in [start, end] (UTC ISO)."""
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM items WHERE source = ? AND deleted_at IS NULL AND occurred_at BETWEEN ? AND ?",
+            (source, start, end),
+        )
+    }
+
+
+def unmerged_commits(conn: sqlite3.Connection, since: str, limit: int) -> list[tuple[str, str, str]]:
+    """(id, owner/repo, sha) for recent commits only seen on a topic branch so far."""
+    return conn.execute(
+        """SELECT id, json_extract(fields, '$.full_name'), json_extract(fields, '$.sha')
+           FROM items
+           WHERE source = 'github' AND deleted_at IS NULL AND json_extract(fields, '$.merged') = 0
+             AND json_extract(fields, '$.full_name') IS NOT NULL AND occurred_at >= ?
+           ORDER BY occurred_at DESC LIMIT ?""",
+        (since, limit),
+    ).fetchall()
+
+
+def load_item(conn: sqlite3.Connection, item_id: str):
+    """A stored item as the record a source would have handed over."""
+    from src.storage.types import ActivityRecord
+
+    row = conn.execute(
+        "SELECT id, source, kind, occurred_at, all_day, title, body, url, fields, raw FROM items WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return ActivityRecord(
+        id=row[0], source=row[1], kind=row[2], timestamp=row[3], all_day=bool(row[4]), title=row[5],
+        body=row[6], url=row[7], fields=json.loads(row[8]), raw=json.loads(row[9]),
+    )
+
+
 def existing_fingerprints(conn: sqlite3.Connection) -> dict[str, str]:
     """id -> fingerprint for everything stored and not deleted, so a sync can skip
     re-embedding what it has already seen unchanged."""

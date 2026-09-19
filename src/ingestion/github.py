@@ -102,3 +102,46 @@ def fetch_recent_commits(since: datetime) -> list[ActivityRecord]:
 
     records.sort(key=lambda record: date_parser.parse(record.timestamp), reverse=True)
     return records
+
+
+def merged_commits(candidates: list[tuple[str, str, str]]) -> set[str]:
+    """Which of these (id, owner/repo, sha) commits have reached their repo's
+    default branch since they were seen on a topic branch.
+
+    Asks GitHub to compare the default branch with the commit: "behind" or
+    "identical" means the default branch already contains it. A branch merged by
+    squash or rebase gets new commits, so its originals never show up this way;
+    they keep their branch label.
+    """
+    gh = Github(github_token())
+    by_repo: dict[str, list[tuple[str, str]]] = {}
+    for item_id, full_name, sha in candidates:
+        by_repo.setdefault(full_name, []).append((item_id, sha))
+
+    merged: set[str] = set()
+    for full_name, commits in by_repo.items():
+        try:
+            repo = gh.get_repo(full_name)
+            default = repo.default_branch
+        except GithubException as error:
+            print(f"[github] can't check {full_name}: {error.data.get('message', error)}")
+            continue
+        for item_id, sha in commits:
+            try:
+                comparison = repo.compare(default, sha)
+            except GithubException:
+                # the commit is gone -- a force-push or a deleted fork
+                continue
+            if comparison.status in ("behind", "identical"):
+                merged.add(item_id)
+    return merged
+
+
+def as_merged(record: ActivityRecord) -> ActivityRecord:
+    """The same commit, relabelled now that it's on the default branch."""
+    label, _, subject = record.title.partition(": ")
+    repo_name = label.split(" [", 1)[0]
+    return record.model_copy(update={
+        "title": f"{repo_name}: {subject}",
+        "fields": {**record.fields, "merged": True},
+    })

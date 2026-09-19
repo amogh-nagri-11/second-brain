@@ -56,11 +56,12 @@ class Speaker:
         self._lock = threading.Lock()
         self._warned = False
 
-    def speak(self, text: str):
+    def speak(self, text: str, on_done=None):
         """Start speaking, cutting off whatever is already being said.
 
         Returns as soon as speech starts so the caller isn't pinned for the length
         of the answer -- that's what makes stop() reachable while it plays.
+        `on_done` is called once this utterance ends, finished or cut off.
         """
         # the caller keeps the original for the clipboard and notification; only the
         # spoken copy gets rewritten
@@ -87,6 +88,13 @@ class Speaker:
             if stdin_text is not None:
                 self._proc.stdin.write(stdin_text.encode("utf-8"))
                 self._proc.stdin.close()
+            proc = self._proc
+
+        if on_done is not None:
+            def wait():
+                proc.wait()
+                on_done()
+            threading.Thread(target=wait, daemon=True).start()
 
     def stop(self):
         """Cut speech off mid-sentence. Safe to call when nothing is speaking."""

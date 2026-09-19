@@ -57,8 +57,8 @@ write_plist() {
         <string>src.capture.menubar_app</string>
     </array>
 
-    <!-- credentials.json, token.json, second-brain.db and icons/ are all resolved
-         relative to the working directory, so this has to be the repo root -->
+    <!-- the repo root, so `python -m src....` can find the package; data lives in
+         ~/Library/Application Support/SecondBrain regardless -->
     <key>WorkingDirectory</key>
     <string>$REPO</string>
 

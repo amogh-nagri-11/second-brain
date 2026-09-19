@@ -5,7 +5,7 @@
 **A local question-answering layer over your own activity — commits and calendar events — with voice input and spoken answers.**
 
 <p>
-  <img alt="Python" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-menubar-000000?logo=apple&logoColor=white">
   <img alt="Local" src="https://img.shields.io/badge/data-stays%20local-2ea44f">
   <img alt="LLM" src="https://img.shields.io/badge/llm-groq%20%C2%B7%20gpt--oss--120b-9d7bff">
@@ -71,23 +71,30 @@ can be answered from a months-old one that embeds slightly closer.
 
 ## Setup
 
-**1. Install**
+**1. Install** with [uv](https://docs.astral.sh/uv/). The extras are optional:
+`voice` for asking by microphone, `menubar` for the macOS menubar app.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv sync --extra voice --extra menubar     # macOS
+uv sync --extra voice                     # Windows, Linux
 ```
 
-**2. Credentials** — create `.env` in the repo root:
+**2. Credentials** are stored in the OS keychain (Keychain on macOS, Credential
+Manager on Windows, Secret Service on Linux), and each one is only needed by the
+source that uses it:
 
-```env
-GITHUB_TOKEN=ghp_...        # repo scope, to read your commits
-GROQ_API_KEY=gsk_...        # console.groq.com
+```bash
+uv run python -m src.config.env set GROQ_API_KEY    # console.groq.com, needed to answer
+uv run python -m src.config.env set GITHUB_TOKEN    # repo scope, only if you want commits
+uv run python -m src.config.env status              # what is set, and where it came from
 ```
 
-**3. Google Calendar** — download an OAuth **desktop app** client from the Google
-Cloud Console as `credentials.json`. In the same console, set the consent
-screen's publishing status to **In production**.
+A `.env` file (in the app folder or the repo root) still works as a fallback, and
+`python -m src.config.env import-env` copies one into the keychain.
+
+**3. Google Calendar** (optional) — download an OAuth **desktop app** client from
+the Google Cloud Console and save it as `credentials.json` in the app folder. In
+the same console, set the consent screen's publishing status to **In production**.
 
 > While the app is in *Testing*, Google expires the refresh token every 7 days,
 > which means re-authorising constantly. Publishing avoids this; the "unverified
@@ -96,15 +103,42 @@ screen's publishing status to **In production**.
 **4. First run** — a browser opens once for Google consent:
 
 ```bash
-python -m src.ingest_all          # incremental
-python -m src.ingest_all --full   # re-fetch and re-embed everything
+uv run python -m src.ingest_all          # incremental
+uv run python -m src.ingest_all --full   # re-fetch and re-embed everything
 ```
 
-**Tests** — offline, no credentials or network needed:
+A source that isn't set up is skipped, not treated as an error.
+
+### Where things live
+
+| | |
+|---|---|
+| macOS | `~/Library/Application Support/SecondBrain` |
+| Windows | `%LOCALAPPDATA%\SecondBrain` |
+| Linux | `~/.local/share/SecondBrain` |
+
+The database, the Google token and `credentials.json` live there.
+`SECOND_BRAIN_HOME` overrides the location. Older checkouts kept these files in the
+repo root; on first run they are copied over (never moved, never overwriting), so
+delete the originals once you're happy.
+
+### Speech output
+
+`say` on macOS, SAPI (through PowerShell) on Windows, `espeak-ng` on Linux —
+install it with your package manager, or answers stay text-only.
+
+### Checks
 
 ```bash
-.venv/bin/python -m unittest discover tests
+uv run python -m unittest discover tests            # offline, no credentials needed
+uv run python -m src.eval.retrieval --compare <run> # retrieval quality, see below
 ```
+
+The retrieval check runs a fixed set of questions with known answers through the
+app's ranking, without calling the LLM, so any change that could affect retrieval
+(the embedding model, chunking, scoring weights) can be compared against an earlier
+run. The questions and a frozen copy of the database stay in `<app folder>/eval`,
+since they describe your own activity; see `src/eval/retrieval.py` for the format.
 
 ## Running without a terminal
 
@@ -187,6 +221,8 @@ src/
 ├── capture/      recorder · transcriber · menubar_app
 ├── output/       speaker.py · speech.py       macOS say, spoken-form rewriting
 ├── ui/           server.py · index.html       the local window
+├── config/       paths · env · google_auth    where files live, credentials
+├── eval/         retrieval.py                 fixed questions, scored before and after
 ├── sync.py       incremental, per-source cursors
 └── pipeline.py   question → answer
 ```
@@ -212,5 +248,7 @@ src/
 - The local window has no login. It only answers requests from its own page
   (checked by `Host`, `Origin` and a JSON content type), so other websites can't
   drive it, but any local process can.
-- macOS only: the menubar app, the `say` speech backend and the launch agent are
-  all platform-specific.
+- Windows and Linux have no background service or hotkey yet: sync, the local
+  window and speech work, but the menubar app and the launch agent are macOS only.
+- Questions about a date (*"what did I ship on 21 Aug?"*) rank poorly, because
+  embeddings barely see dates. The retrieval check tracks this.

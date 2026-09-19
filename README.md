@@ -100,6 +100,12 @@ python -m src.ingest_all          # incremental
 python -m src.ingest_all --full   # re-fetch and re-embed everything
 ```
 
+**Tests** — offline, no credentials or network needed:
+
+```bash
+.venv/bin/python -m unittest discover tests
+```
+
 ## Running without a terminal
 
 A launch agent runs the menubar app so the repo doesn't need an open terminal.
@@ -201,11 +207,10 @@ src/
 
 ## Known limitations
 
-- Retrieval caps at 25 records, so a question spanning more occurrences than that
+- Retrieval caps at 60 records, so a question spanning more occurrences than that
   returns a complete-looking but partial list.
-- `[branch]` marks unmerged work in the text, but the model isn't told what the
-  convention means, so it won't reliably answer *"what hasn't merged?"*
-- The local window has no authentication. Fine on a single laptop, but worth
-  knowing.
+- The local window has no login. It only answers requests from its own page
+  (checked by `Host`, `Origin` and a JSON content type), so other websites can't
+  drive it, but any local process can.
 - macOS only: the menubar app, the `say` speech backend and the launch agent are
   all platform-specific.

@@ -35,6 +35,19 @@ def get_connection() -> sqlite3.Connection:
         )
     """)
 
+    # questions asked and what came back, so the window and the menu still have
+    # them after a restart
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asked_at REAL NOT NULL,
+            question TEXT NOT NULL,
+            spoken TEXT NOT NULL,
+            written TEXT NOT NULL,
+            via TEXT NOT NULL
+        )
+    """)
+
     _migrate(conn)
     conn.commit()
 
@@ -143,3 +156,21 @@ def set_last_synced_at(conn: sqlite3.Connection, source: str, timestamp: str):
         (source, timestamp),
     )
     conn.commit()
+
+def add_history(conn: sqlite3.Connection, asked_at: float, question: str, spoken: str, written: str, via: str):
+    conn.execute(
+        "INSERT INTO history (asked_at, question, spoken, written, via) VALUES (?,?,?,?,?)",
+        (asked_at, question, spoken, written, via),
+    )
+    conn.commit()
+
+def recent_history(conn: sqlite3.Connection, limit: int) -> list[dict]:
+    """Newest first."""
+    rows = conn.execute(
+        "SELECT asked_at, question, spoken, written, via FROM history ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [
+        {"asked_at": r[0], "question": r[1], "spoken": r[2], "written": r[3], "via": r[4]}
+        for r in rows
+    ]

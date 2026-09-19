@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 
 import numpy as np 
@@ -14,14 +15,30 @@ def cluster_embedding(cluster: list[dict]) -> np.ndarray:
     embeddings = np.stack([r['embedding'] for r in cluster])
     return embeddings.mean(axis=0)
 
-def keyword_overlap_score(query: str, cluster: list[dict]) -> float: 
-    query_words = set(query.lower().split())
-    cluster_text = " ".join(f"{r['title']} {r['body']}" for r in cluster).lower() 
-    cluster_words = set(cluster_text.split()) 
-    if not query_words: 
-        return 0.0 
-    overlap = query_words & cluster_words 
-    return len(overlap)/len(query_words) 
+# words every question is made of. Left in, "what did I do on the parser" scores
+# most of its overlap from "what", "I" and "on", which every record can match, and
+# the one word that picks a record out -- "parser" -- is a fifth of the score.
+STOPWORDS = frozenset("""
+    a about all am an and any are as at be been by can could did do does done for
+    from get got had has have how i in is it its last latest me my of on or our so
+    than that the their them then there these this those to up was we were what
+    when where which who why will with work worked working you your
+""".split())
+
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9_\-]*")
+
+
+def _words(text: str) -> set[str]:
+    # a regex rather than str.split, so "parser?" and "(parser)" both match "parser"
+    return set(_WORD_RE.findall(text.lower())) - STOPWORDS
+
+
+def keyword_overlap_score(query: str, cluster: list[dict]) -> float:
+    query_words = _words(query)
+    if not query_words:
+        return 0.0
+    cluster_words = _words(" ".join(f"{r['title']} {r['body']}" for r in cluster))
+    return len(query_words & cluster_words) / len(query_words)
 
 def _newest(cluster: list[dict]) -> datetime:
     """All-day calendar events carry a bare date and commits a tz-aware timestamp,

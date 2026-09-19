@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from openai import OpenAI
 from src.config.env import API_KEY
@@ -75,8 +76,16 @@ def _split(reply: str) -> Answer:
     )
 
 
-def synthesize_answer(query: str, cluster: list[dict], model: str = 'openai/gpt-oss-120b') -> Answer:
+def synthesize_answer(
+    query: str,
+    cluster: list[dict],
+    model: str = 'openai/gpt-oss-120b',
+    now: datetime | None = None,
+) -> Answer:
     context = format_cluster_from_prompt(cluster)
+    # without this "yesterday" and "this week" have nothing to be measured from, and
+    # the model guesses a date out of its training data instead
+    today = (now or datetime.now().astimezone()).strftime("%A %d %b %Y, %-I:%M %p %Z")
 
     prompt = f"""You are answering a question about the user's own recent activity, based only on the records below.
 
@@ -89,6 +98,10 @@ WRITTEN:
 The same answer formatted to be pasted into a document or an email. Open with one short line saying what it covers, then bullet points. Markdown is fine. Include the detail the spoken version had to leave out, and list every matching record rather than a sample, but stay factual and stick to the records -- no greeting, no sign-off, no invented context.
 
 Write dates the way a person would in a document: "21 Aug 2026", or "21 Aug 2026, 3:40 pm" when the time matters. Never paste a raw timestamp like 2026-08-21T10:09:02+00:00.
+
+It is now {today}. Resolve relative dates in the question ("yesterday", "last week") against that.
+
+Commit titles read "<repo>: <subject>" when the commit is on the repo's default branch, and "<repo> [<branch>]: <subject>" when it is only on another branch -- that is, work that has not been merged yet. Use this when asked what has or hasn't landed.
 
 Records:
 {context}

@@ -22,7 +22,7 @@ SERVICE_ARGS = ["-m", "src", "serve", "--log-file"]
 MENUBAR_ARGS = ["-m", "src.capture.menubar_app"]
 
 LAUNCHD_SERVICE = "com.secondbrain.service"
-# the same label the old scripts/launch_agent.sh used, so installing replaces it
+# the label the old launch-agent script used, so installing replaces that agent
 LAUNCHD_MENUBAR = "com.secondbrain.menubar"
 SYSTEMD_UNIT = "second-brain.service"
 WINDOWS_TASK = "SecondBrain"

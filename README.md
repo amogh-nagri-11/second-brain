@@ -19,13 +19,13 @@
 
 Second Brain ingests your GitHub commits (across repos and branches) and your
 Google Calendar events, embeds them locally, and answers natural-language
-questions about them. Hold <kbd>F9</kbd> and ask, or type into a local window.
-Each answer comes back in two forms: a short one spoken aloud, and a written one
+questions about them. Press a shortcut and ask, or type into a local window.
+It runs as a small background service on macOS, Windows and Linux. Each answer comes back in two forms: a short one spoken aloud, and a written one
 copied to the clipboard.
 
 | Feature | Description |
 |---|---|
-| Voice input | Hold <kbd>F9</kbd> anywhere to record a question; the answer is spoken back |
+| Voice input | Press your shortcut anywhere and ask; recording stops when you go quiet, and the answer is spoken back |
 | Typed input | A local window for when speech isn't practical — text only, no speech output |
 | Retrieval | *"What was my latest commit on `<repo>`?"* resolves to the right commit, from the right branch |
 | Dual output | A concise spoken answer plus a written one with dates and bullets |
@@ -47,7 +47,7 @@ flowchart LR
     DB --> CL["entity linking<br/>cosine + 48h window"]
 
     subgraph query["a question"]
-        MIC["F9 / mic"] --> W["faster-whisper"]
+        MIC["shortcut / mic"] --> W["faster-whisper"]
         TYPE["typed"]
     end
 
@@ -140,41 +140,49 @@ app's ranking, without calling the LLM, so any change that could affect retrieva
 run. The questions and a frozen copy of the database stay in `<app folder>/eval`,
 since they describe your own activity; see `src/eval/retrieval.py` for the format.
 
-## Running without a terminal
+## Running it
 
-A launch agent runs the menubar app so the repo doesn't need an open terminal.
-By default it is started manually:
-
-```bash
-scripts/launch_agent.sh install     # set it up, don't start anything yet
-scripts/launch_agent.sh start       # start it now
-scripts/launch_agent.sh stop        # stop it, and it stays stopped
-```
-
-Add `--login` to start it at every login and restart it on crash, while still
-respecting **Quit** from the menu (a clean exit stays exited until the next
-login):
+Everything runs in one background service. The window, the CLI, the keyboard
+shortcut and the macOS menubar are all clients of it.
 
 ```bash
-scripts/launch_agent.sh install --login
+uv run python -m src service install            # start at login, restart on crash
+uv run python -m src service install --menubar  # macOS: plus the menubar app
+uv run python -m src service hotkey             # how to bind a key on this OS
 ```
+
+It uses what each OS provides: a launchd agent on macOS, a systemd user unit on
+Linux, and a Task Scheduler logon task on Windows. On Windows that runs in your
+own session rather than as a Windows Service, which would have no microphone or
+speakers. Stopping it (or **Quit** in the menu) keeps it stopped until the next
+login.
 
 ```bash
-scripts/launch_agent.sh status      # installed? running? last exit code?
-scripts/launch_agent.sh logs        # stdout/stderr from the agent
-scripts/launch_agent.sh perms       # what to grant for the F9 hotkey
-scripts/launch_agent.sh uninstall   # remove it entirely
+uv run python -m src service status | start | stop | logs | uninstall
+uv run python -m src serve                      # or just run it in a terminal
 ```
 
-> When run from a terminal, the <kbd>F9</kbd> hotkey inherits the terminal's
-> Accessibility permission. Under launchd, the Python interpreter needs its own
-> grant — `perms` prints the exact path. Until it is granted, recording still
-> works from the menu.
+### The shortcut
+
+The shortcut is bound in the OS, not in the app, so it needs no Accessibility
+permission and works on Wayland too. It runs `src/__main__.py record`, which only
+sends a request, so it takes a few tens of milliseconds. Press it and ask; recording
+stops once you've been quiet for 1.5 s, or press it again. `service hotkey` prints
+the exact command and where to set it: Shortcuts on macOS, PowerToys or
+AutoHotkey on Windows, the desktop's keyboard settings on Linux.
+
+### From a terminal
+
+```bash
+python -m src ask "what did I ship this week?"   # prints the written answer
+python -m src record                             # start / stop listening
+python -m src status | sync | stop | open
+```
 
 ## Interfaces
 
-**Menubar** — the launcher and quick controls. The latest answer is rendered into
-the dropdown, so reading it takes no extra click:
+**Menubar** (macOS) — quick controls, with the latest answer rendered into the
+dropdown, so reading it takes no extra click:
 
 ```
 Open Window
@@ -190,23 +198,12 @@ Recent ▸    Show Transcript…
 Sync Now (last: 4m ago)
 ```
 
-**Window** — `http://127.0.0.1:8765`, served by the app itself using only the
-standard library. Type a question with <kbd>⌘</kbd><kbd>↵</kbd>, watch live
-state, or replay an earlier answer. Typed questions are never read aloud.
+**Window** — `http://127.0.0.1:8765` (`python -m src open`), served by the
+service. Type a question with <kbd>⌘</kbd>/<kbd>Ctrl</kbd><kbd>↵</kbd>, replay an
+earlier answer, and watch state change as it happens: the service pushes events
+rather than the page polling. Typed questions are never read aloud.
 
-## Resource usage
-
-Measured while idle:
-
-| | |
-|---|---|
-| CPU | ~0.07%, and zero idle wake-ups |
-| Memory | ~0.5–0.7 GB resident (before the speech model loads) |
-| Network | 24 syncs a day |
-
-Memory is the main cost, not the per-second menu refresh: the speech-to-text
-model alone is ~540 MB, which is why it loads on the first question rather than
-at startup, and why syncing is hourly.
+Questions and answers are kept in the database, so history survives a restart.
 
 ## Layout
 
@@ -218,9 +215,10 @@ src/
 ├── entities/     linking.py                   commits → coherent clusters
 ├── retrieval/    search.py                    semantic + keyword + recency
 ├── synthesis/    answer.py                    one call, two answers
+├── core/         service · api · serve · client · autostart   the background service
 ├── capture/      recorder · transcriber · menubar_app
 ├── output/       speaker.py · speech.py       macOS say, spoken-form rewriting
-├── ui/           server.py · index.html       the local window
+├── ui/           index.html                   the local window
 ├── config/       paths · env · google_auth    where files live, credentials
 ├── eval/         retrieval.py                 fixed questions, scored before and after
 ├── sync.py       incremental, per-source cursors
@@ -245,10 +243,10 @@ src/
 
 - Retrieval caps at 60 records, so a question spanning more occurrences than that
   returns a complete-looking but partial list.
-- The local window has no login. It only answers requests from its own page
-  (checked by `Host`, `Origin` and a JSON content type), so other websites can't
-  drive it, but any local process can.
-- Windows and Linux have no background service or hotkey yet: sync, the local
-  window and speech work, but the menubar app and the launch agent are macOS only.
+- The service answers only its own page and clients holding the per-launch token
+  in `service.json`, which only your user account can read. Anything running as
+  you can read that file too.
+- The Windows and Linux service setups are covered by tests of the files they
+  generate, but have only been run for real on macOS.
 - Questions about a date (*"what did I ship on 21 Aug?"*) rank poorly, because
   embeddings barely see dates. The retrieval check tracks this.

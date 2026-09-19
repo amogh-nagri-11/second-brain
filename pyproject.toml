@@ -33,11 +33,9 @@ voice = [
     "faster-whisper>=1.2",
     "sounddevice>=0.5",
 ]
-# the macOS menubar app. rumps and pynput pull in the few pyobjc frameworks they
-# use, rather than all ~170 that the old requirements.txt pinned
+# the macOS menubar app. rumps pulls in the one pyobjc framework it uses, rather
+# than all ~170 that the old requirements.txt pinned
 menubar = [
-    "pynput>=1.8; sys_platform == 'darwin'",
-    "pyperclip>=1.11",
     "rumps>=0.4; sys_platform == 'darwin'",
 ]
 dev = [

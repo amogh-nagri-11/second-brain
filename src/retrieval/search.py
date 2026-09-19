@@ -61,9 +61,10 @@ def search(
     query_embedding: np.ndarray, 
     query_text: str, 
     clusters: list[list[dict]], 
-    top_k: int = 3, 
+    top_k: int = 3,
+    now: datetime | None = None,
 ) -> list[tuple[list[dict], float]]:
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
 
     scored = [] 
     for cluster in clusters: 

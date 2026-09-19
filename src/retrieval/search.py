@@ -40,6 +40,11 @@ STOPWORDS = frozenset("""
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9_\-]*")
 
 
+def query_words(text: str) -> list[str]:
+    """The words of a question worth matching on, in order."""
+    return sorted(_words(text))
+
+
 def _words(text: str) -> set[str]:
     # a regex rather than str.split, so "parser?" and "(parser)" both match "parser"
     return set(_WORD_RE.findall(text.lower())) - STOPWORDS
@@ -75,14 +80,20 @@ def search(
     clusters: list[list[dict]], 
     top_k: int = 3,
     now: datetime | None = None,
+    keywords: dict[str, float] | None = None,
 ) -> list[tuple[list[dict], float]]:
+    """`keywords` is id -> keyword score from the full-text index; without it the
+    score falls back to plain word overlap."""
     now = now or datetime.now(timezone.utc)
 
     scored = [] 
     for cluster in clusters: 
         cluster_vec = cluster_embedding(cluster) 
         semantic_vec = cosine_similarity(query_embedding, cluster_vec) 
-        keyword_score = keyword_overlap_score(query_text, cluster) 
+        if keywords is None:
+            keyword_score = keyword_overlap_score(query_text, cluster)
+        else:
+            keyword_score = max(keywords.get(r["id"], 0.0) for r in cluster)
         # without this nothing in the ranking knows what "latest" means, and a
         # question about the newest commit can be answered from months-old ones
         # that happened to embed slightly closer
@@ -102,6 +113,7 @@ def score_records(
     query_text: str,
     records: list[dict],
     now: datetime | None = None,
+    keywords: dict[str, float] | None = None,
 ) -> list[tuple[dict, float]]:
     """Rank individual records, not clusters.
 
@@ -117,7 +129,10 @@ def score_records(
         (
             record,
             (0.7 * semantic_score(query_embedding, record))
-            + (0.15 * keyword_overlap_score(query_text, [record]))
+            + (0.15 * (
+                keyword_overlap_score(query_text, [record]) if keywords is None
+                else keywords.get(record["id"], 0.0)
+            ))
             + (0.15 * recency_score([record], now)),
         )
         for record in records

@@ -2,6 +2,7 @@
 
     items       one row per thing that happened, whatever the source
     chunks      the pieces of an item's text that get embedded, with their vectors
+    items_fts   full-text index over each item's title, body and fields, for keywords
     sync_state  how far each source has been synced
     meta        small settings, e.g. which model produced the stored vectors
     history     questions asked and what came back
@@ -25,7 +26,7 @@ from dateutil import parser as date_parser
 
 from src.config.paths import db_path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -54,6 +55,13 @@ CREATE TABLE IF NOT EXISTS chunks (
     embedding BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chunks_by_item ON chunks (item_id);
+
+-- porter stemming, so "commits" finds "commit"; kept in step with items by
+-- save_item and mark_deleted
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
+    item_id UNINDEXED, title, body, fields,
+    tokenize = 'porter unicode61'
+);
 
 -- remembers how far each source has been ingested, so a sync only pulls new stuff
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -92,6 +100,8 @@ def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
             conn.executescript(SCHEMA)
             if _has_table(conn, "activity_records"):
                 _migrate_from_activity_records(conn)
+            if version < 3:
+                _index_all(conn)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     return conn
 
@@ -203,6 +213,57 @@ def _migrate_from_activity_records(conn: sqlite3.Connection):
     conn.execute("DROP TABLE activity_records")
 
 
+# --- the keyword index --------------------------------------------------------
+
+def _fields_text(fields: dict) -> str:
+    """Field values as words -- attendees, locations, repo and branch names are
+    what people type -- leaving out flags and hashes nobody asks by."""
+    words = []
+    for key, value in fields.items():
+        if key in ("sha", "merged", "status"):
+            continue
+        if isinstance(value, list):
+            words.extend(str(v) for v in value)
+        elif isinstance(value, str):
+            words.append(value)
+    return " ".join(words)
+
+
+def _index(conn: sqlite3.Connection, item_id: str, title: str, body: str, fields: dict):
+    conn.execute("DELETE FROM items_fts WHERE item_id = ?", (item_id,))
+    conn.execute(
+        "INSERT INTO items_fts (item_id, title, body, fields) VALUES (?,?,?,?)",
+        (item_id, title, body, _fields_text(fields)),
+    )
+
+
+def _index_all(conn: sqlite3.Connection):
+    conn.execute("DELETE FROM items_fts")
+    for item_id, title, body, fields in conn.execute(
+        "SELECT id, title, body, fields FROM items WHERE deleted_at IS NULL"
+    ).fetchall():
+        _index(conn, item_id, title, body, json.loads(fields))
+
+
+def keyword_scores(conn: sqlite3.Connection, words: list[str]) -> dict[str, float]:
+    """id -> BM25 relevance for items matching any of `words`, scaled so the best
+    match is 1. Titles weigh double: a commit subject or meeting name is what a
+    question usually names."""
+    if not words:
+        return {}
+    # each word quoted, so nothing in a question is read as FTS syntax; a
+    # hyphenated name becomes a phrase ("sql-ledger" -> sql ledger)
+    query = " OR ".join(f'"{word}"' for word in words)
+    rows = conn.execute(
+        "SELECT item_id, -bm25(items_fts, 0.0, 2.0, 1.0, 1.0) FROM items_fts WHERE items_fts MATCH ?",
+        (query,),
+    ).fetchall()
+    if not rows:
+        return {}
+    best = max(score for _id, score in rows) or 1.0
+    return {item_id: score / best for item_id, score in rows}
+
+
 # --- items ------------------------------------------------------------------
 
 def save_item(conn: sqlite3.Connection, record, chunks: list[tuple[str, list[float]]]):
@@ -227,6 +288,7 @@ def save_item(conn: sqlite3.Connection, record, chunks: list[tuple[str, list[flo
             ),
         )
         replace_chunks(conn, record.id, chunks)
+        _index(conn, record.id, record.title, record.body, record.fields)
 
 
 def record_fingerprint(record) -> str:
@@ -252,6 +314,7 @@ def mark_deleted(conn: sqlite3.Connection, item_ids: list[str]):
             "UPDATE items SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
             [(now, item_id) for item_id in item_ids],
         )
+        conn.executemany("DELETE FROM items_fts WHERE item_id = ?", [(i,) for i in item_ids])
 
 
 def existing_fingerprints(conn: sqlite3.Connection) -> dict[str, str]:

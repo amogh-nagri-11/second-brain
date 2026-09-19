@@ -4,8 +4,8 @@ from dateutil import parser as date_parser
 
 from src.config.env import MissingCredential
 from src.embeddings.provider import get_embedder
-from src.storage.db import get_clusters_version, get_connection, load_clusters
-from src.retrieval.search import score_records, search
+from src.storage.db import get_clusters_version, get_connection, keyword_scores, load_clusters
+from src.retrieval.search import query_words, score_records, search
 from src.synthesis.answer import Answer, synthesize_answer
 
 # how many of the ranked clusters feed the answer. Anything that spans separate
@@ -78,15 +78,20 @@ def _context_records(results, ranked: list[tuple[dict, float]]) -> list[dict]:
     return records
 
 
-def retrieve(query_text: str, clusters: list[list[dict]], now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+def retrieve(
+    conn, query_text: str, clusters: list[list[dict]], now: datetime | None = None
+) -> tuple[list[dict], list[dict]]:
     """(the records the model is shown, every record ranked best first).
 
     The one path from a question to its context -- the app answers from it and the
     retrieval check scores it, so the check measures what the app actually does.
     """
     query_embedding = get_embedder().embed(query_text)
-    results = search(query_embedding, query_text, clusters, top_k=TOP_K_CLUSTERS, now=now)
-    ranked = score_records(query_embedding, query_text, [r for c in clusters for r in c], now=now)
+    keywords = keyword_scores(conn, query_words(query_text))
+    results = search(query_embedding, query_text, clusters, top_k=TOP_K_CLUSTERS, now=now, keywords=keywords)
+    ranked = score_records(
+        query_embedding, query_text, [r for c in clusters for r in c], now=now, keywords=keywords
+    )
     return _context_records(results, ranked), [record for record, _score in ranked]
 
 
@@ -94,13 +99,12 @@ def get_answer(query_text: str) -> Answer:
     conn = get_connection()
     try:
         clusters = get_clusters(conn)
+        if not clusters:
+            return Answer(spoken="I haven't ingested anything yet", written="")
+        context, _ranked = retrieve(conn, query_text, clusters)
     finally:
         conn.close()
 
-    if not clusters:
-        return Answer(spoken="I haven't ingested anything yet", written="")
-
-    context, _ranked = retrieve(query_text, clusters)
     if not context:
         return Answer(spoken="I don't have anything relating to that yet", written="")
 

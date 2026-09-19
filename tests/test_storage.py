@@ -122,5 +122,41 @@ class ItemTests(unittest.TestCase):
         self.assertEqual(len(db.load_all_records(self.conn)), 1)
 
 
+class KeywordIndexTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conn = db.get_connection(Path(self._tmp.name) / "brain.db")
+        self.addCleanup(self.conn.close)
+        for item_id, title, fields in [
+            ("c1", "sql-ledger: Phase 2 schema migrations", {"repo": "sql-ledger"}),
+            ("c2", "ratelimiter: token bucket with lazy refill", {"repo": "ratelimiter"}),
+            ("e1", "Standup", {"attendees": ["Priya Sharma"], "location": "Room 4"}),
+        ]:
+            record = ActivityRecord(id=item_id, source="github", kind="commit",
+                                    timestamp="2026-09-01T00:00:00+00:00", title=title, body="", fields=fields)
+            db.save_item(self.conn, record, [(title, vector(1))])
+
+    def test_best_match_scores_one(self):
+        scores = db.keyword_scores(self.conn, ["token", "bucket"])
+        self.assertEqual(scores, {"c2": 1.0})
+
+    def test_hyphenated_names_match_as_a_phrase(self):
+        self.assertEqual(set(db.keyword_scores(self.conn, ["sql-ledger"])), {"c1"})
+
+    def test_stemming(self):
+        self.assertIn("c1", db.keyword_scores(self.conn, ["migration"]))
+
+    def test_fields_are_searchable(self):
+        self.assertEqual(set(db.keyword_scores(self.conn, ["priya"])), {"e1"})
+
+    def test_question_text_is_never_fts_syntax(self):
+        self.assertEqual(db.keyword_scores(self.conn, ["near", "or", "and-not"]), {})
+
+    def test_deleted_items_leave_the_index(self):
+        db.mark_deleted(self.conn, ["c2"])
+        self.assertEqual(db.keyword_scores(self.conn, ["bucket"]), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,17 +60,15 @@ def take_snapshot():
     print(f"snapshot written to {target}")
 
 
-def build_clusters(workdir: Path) -> list[list[dict]]:
-    """The snapshot, brought up to date by the app's own code in a scratch copy."""
+def build(workdir: Path):
+    """The snapshot, brought up to date by the app's own code in a scratch copy.
+    Returns (connection, clusters)."""
     copy = workdir / "eval.db"
     shutil.copy(eval_dir() / "snapshot.db", copy)
     conn = get_connection(copy)
-    try:
-        reembed_if_stale(conn, log=lambda _line: None, force=True)
-        save_clusters(conn, link_entities(load_all_records(conn)))
-        return load_clusters(conn)
-    finally:
-        conn.close()
+    reembed_if_stale(conn, log=lambda _line: None, force=True)
+    save_clusters(conn, link_entities(load_all_records(conn)))
+    return conn, load_clusters(conn)
 
 
 def _reciprocal_rank(ranked_ids: list[str], expected: set[str]) -> float:
@@ -83,8 +81,14 @@ def _reciprocal_rank(ranked_ids: list[str], expected: set[str]) -> float:
 def run(questions: dict) -> dict:
     now = date_parser.parse(questions["as_of"])
     with tempfile.TemporaryDirectory() as workdir:
-        clusters = build_clusters(Path(workdir))
+        conn, clusters = build(Path(workdir))
+        try:
+            return _score(questions, conn, clusters, now)
+        finally:
+            conn.close()
 
+
+def _score(questions: dict, conn, clusters: list[list[dict]], now) -> dict:
     records = [r for cluster in clusters for r in cluster]
     known_ids = {r["id"] for r in records}
     results = []
@@ -95,7 +99,7 @@ def run(questions: dict) -> dict:
         if missing:
             raise SystemExit(f"{item['q']!r} expects ids not in the snapshot: {sorted(missing)}")
 
-        context, ranked = retrieve(item["q"], clusters, now=now)
+        context, ranked = retrieve(conn, item["q"], clusters, now=now)
         context_ids = {r["id"] for r in context}
         ranked_ids = [r["id"] for r in ranked]
 

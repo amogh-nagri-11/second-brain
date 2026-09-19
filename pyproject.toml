@@ -1,0 +1,55 @@
+[project]
+name = "second-brain"
+version = "0.1.0"
+description = "A local question-answering layer over your own commits and calendar."
+readme = "README.md"
+requires-python = ">=3.12"
+
+# what everything needs, on every OS: sync, retrieval, answers, the local window
+dependencies = [
+    "google-api-python-client>=2.198",
+    "google-auth>=2.56",
+    "google-auth-oauthlib>=1.4",
+    "keyring>=25",
+    "numpy>=2.5",
+    "openai>=2.52",
+    "platformdirs>=4",
+    "pydantic>=2.13",
+    "PyGithub>=2.9",
+    "python-dateutil>=2.9",
+    "python-dotenv>=1.2",
+    "sentence-transformers>=5.6",
+    # only here so Linux can take it from the CPU index below; sentence-transformers
+    # needs it everywhere anyway
+    "torch>=2.13",
+]
+
+[project.optional-dependencies]
+# asking by voice: the microphone and speech-to-text
+voice = [
+    "faster-whisper>=1.2",
+    "sounddevice>=0.5",
+]
+# the macOS menubar app. rumps and pynput pull in the few pyobjc frameworks they
+# use, rather than all ~170 that the old requirements.txt pinned
+menubar = [
+    "pynput>=1.8; sys_platform == 'darwin'",
+    "pyperclip>=1.11",
+    "rumps>=0.4; sys_platform == 'darwin'",
+]
+dev = [
+    "pillow>=12",
+]
+
+[tool.uv]
+# run from the repo root as `python -m src....`; there is nothing to install
+package = false
+
+# torch from PyPI on Linux bundles the CUDA libraries, several GB this never uses
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

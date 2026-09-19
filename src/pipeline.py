@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from dateutil import parser as date_parser
 
+from src.config.env import MissingCredential
 from src.embeddings.provider import get_embedder
 from src.storage.db import get_clusters_version, get_connection, load_clusters
 from src.retrieval.search import score_records, search
@@ -94,4 +95,7 @@ def get_answer(query_text: str) -> Answer:
     if not ranked:
         return Answer(spoken="I don't have anything relating to that yet", written="")
 
-    return synthesize_answer(query_text, _context_records(results, ranked))
+    try:
+        return synthesize_answer(query_text, _context_records(results, ranked))
+    except MissingCredential as error:
+        return Answer(spoken="I need a Groq API key before I can answer", written=str(error))

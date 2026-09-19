@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as date_parser
 
+from src.config.env import get_secret
+from src.config.paths import google_client_path, google_token_path
 from src.embeddings.provider import get_embedder
 from src.entities.linking import link_entities
 from src.ingestion.calendar import fetch_recent_events
@@ -40,11 +42,19 @@ def _since_for(conn, source: str) -> datetime:
     return date_parser.parse(last) - timedelta(hours=OVERLAP_HOURS)
 
 
+# name -> (is it set up?, fetch everything since a moment)
+SOURCES = {
+    "github": (lambda: bool(get_secret("GITHUB_TOKEN")), fetch_recent_commits),
+    "calendar": (
+        lambda: google_token_path().exists() or google_client_path().exists(),
+        fetch_recent_events,
+    ),
+}
+
+
 def _fetch(conn, source: str) -> list:
-    since = _since_for(conn, source)
-    if source == "github":
-        return fetch_recent_commits(since)
-    return fetch_recent_events(since)
+    _configured, fetch = SOURCES[source]
+    return fetch(_since_for(conn, source))
 
 
 def run_sync(conn=None, log=print) -> dict:
@@ -63,8 +73,16 @@ def run_sync(conn=None, log=print) -> dict:
         updated = 0
         skipped = 0
         failed: list[str] = []
+        not_configured: list[str] = []
 
-        for source in ("github", "calendar"):
+        for source, (configured, _fetch_since) in SOURCES.items():
+            # a source you haven't set up isn't a failure -- skip it quietly and
+            # sync the rest
+            if not configured():
+                not_configured.append(source)
+                log(f"[sync] {source}: not set up, skipped")
+                continue
+
             started_at = datetime.now(timezone.utc)
 
             try:
@@ -106,6 +124,7 @@ def run_sync(conn=None, log=print) -> dict:
             "updated": updated,
             "skipped": skipped,
             "failed": failed,
+            "not_configured": not_configured,
             "changed": bool(changed),
         }
     finally:

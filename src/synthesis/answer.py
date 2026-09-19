@@ -3,12 +3,18 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from openai import OpenAI
-from src.config.env import API_KEY
+from src.config.env import groq_api_key
 
-client = OpenAI(
-    api_key=API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-)
+_client: OpenAI | None = None
+
+
+def client() -> OpenAI:
+    """Built on first use, so a missing key surfaces as an answer, not an import
+    error that stops the app from starting."""
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=groq_api_key(), base_url="https://api.groq.com/openai/v1")
+    return _client
 
 # full commit messages are long enough that a few dozen records blow the free-tier
 # token budget; the subject line carries most of the signal anyway
@@ -111,7 +117,7 @@ Records:
 
 Question: {query}"""
 
-    response = client.chat.completions.create(
+    response = client().chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         # gpt-oss reasons before it answers out of this same budget. Asking for two

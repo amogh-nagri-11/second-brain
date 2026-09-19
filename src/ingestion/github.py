@@ -3,7 +3,7 @@ from datetime import datetime
 from dateutil import parser as date_parser
 from github import Github, GithubException
 
-from src.config.env import GITHUB_TOKEN
+from src.config.env import github_token
 from src.storage.types import ActivityRecord
 
 
@@ -82,7 +82,7 @@ def _repo_commits(repo, username: str, since: datetime) -> list[ActivityRecord]:
 
 def fetch_recent_commits(since: datetime) -> list[ActivityRecord]:
     """Commits authored by the authenticated user across every repo they own."""
-    gh = Github(GITHUB_TOKEN)
+    gh = Github(github_token())
     username = gh.get_user().login
 
     records = []

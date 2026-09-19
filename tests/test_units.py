@@ -13,8 +13,7 @@ from unittest import mock
 
 import numpy as np
 
-# answer.py builds its client at import time from these
-os.environ.setdefault("GITHUB_TOKEN", "test")
+# the Groq client is built from this on first use
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 from src.retrieval.search import keyword_overlap_score, recency_score, score_records
@@ -67,7 +66,7 @@ class AnswerTests(unittest.TestCase):
     def test_prompt_carries_today_and_branch_convention(self):
         reply = mock.Mock()
         reply.choices = [mock.Mock(message=mock.Mock(content="SPOKEN: a\nWRITTEN: b"))]
-        with mock.patch.object(answer.client.chat.completions, "create", return_value=reply) as create:
+        with mock.patch.object(answer.client().chat.completions, "create", return_value=reply) as create:
             answer.synthesize_answer("q", [record("r")], now=datetime(2026, 9, 19, 9, 0, tzinfo=timezone.utc))
         prompt = create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Saturday 19 Sep 2026", prompt)

@@ -87,6 +87,8 @@ def serve(log_file: bool = False) -> int:
     brain.start_scheduler()
     print(f"[serve] listening on http://127.0.0.1:{port}/", flush=True)
 
-    config = uvicorn.Config(app, log_level="warning", access_log=False)
+    # the window and the menubar hold an event stream open for as long as they
+    # run; without a limit, shutdown waits for them to disconnect, forever
+    config = uvicorn.Config(app, log_level="warning", access_log=False, timeout_graceful_shutdown=2)
     uvicorn.Server(config).run(sockets=[sock])
     return 0

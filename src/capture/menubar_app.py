@@ -6,7 +6,7 @@ import textwrap
 import threading
 import time
 import pyperclip
-from src.capture.recorder import Recorder
+from src.capture.recorder import SAMPLE_RATE, Recorder
 from src.capture.transcriber import Transcriber
 from src.output.speaker import Speaker
 from src.pipeline import get_answer, invalidate_cluster_cache
@@ -26,6 +26,8 @@ MAX_HISTORY = 8
 # only ever touched from the main thread
 MENU_REFRESH_SECONDS = 1
 RECENT_TITLE_CHARS = 45
+# anything shorter is a key tap, not a question
+MIN_QUESTION_SAMPLES = SAMPLE_RATE // 2
 TRANSCRIPT_SEPARATOR = "\n\n" + "-" * 52 + "\n\n"
 
 # the answer is shown in the dropdown itself, one menu row per wrapped line
@@ -359,8 +361,8 @@ class SecondBrainApp(rumps.App):
         if self.is_Recording: 
             self.is_Recording = False 
             self.icon = "icons/idle.png" 
-            audio_path = self.recorder.stop() 
-            threading.Thread(target=self._process, args=(audio_path,)).start() 
+            audio = self.recorder.stop()
+            threading.Thread(target=self._process, args=(audio,)).start()
 
     def _on_press(self, key): 
         if key==HOTKEY and not self.is_Recording: 
@@ -417,8 +419,14 @@ class SecondBrainApp(rumps.App):
                 self._syncing = False
             self._sync_lock.release()
 
-    def _process(self, audio_path: str):
-        query_text = self.transcriber.transcribe(audio_path)
+    def _process(self, audio):
+        # a tap of the hotkey rather than a hold -- nothing worth transcribing, and
+        # whisper tends to hallucinate a phrase out of near-silence
+        if len(audio) < MIN_QUESTION_SAMPLES:
+            return
+        query_text = self.transcriber.transcribe(audio)
+        if not query_text:
+            return
         print(f"You asked: {query_text}")
         self._answer_question(query_text)
 

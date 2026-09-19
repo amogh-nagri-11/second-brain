@@ -1,5 +1,6 @@
 import threading
 
+import numpy as np
 from faster_whisper import WhisperModel 
 # faster_whisper is a reimplementation of openai-whisper but at a smaller scale 
 # not enough if aiming for a higher accuracy or continuous streams 
@@ -19,6 +20,7 @@ class Transcriber:
                 self._model = WhisperModel(self._model_size, device='cpu', compute_type='int8')
             return self._model
 
-    def transcribe(self, audio_path: str) -> str: 
-        segments, _ = self.model.transcribe(audio_path) 
-        return " ".join(segment.text for segment in segments).strip() 
+    def transcribe(self, audio: np.ndarray) -> str:
+        """16 kHz mono float32 samples, as the recorder produces them."""
+        segments, _ = self.model.transcribe(audio)
+        return " ".join(segment.text for segment in segments).strip()

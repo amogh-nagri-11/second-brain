@@ -174,3 +174,14 @@ def recent_history(conn: sqlite3.Connection, limit: int) -> list[dict]:
         {"asked_at": r[0], "question": r[1], "spoken": r[2], "written": r[3], "via": r[4]}
         for r in rows
     ]
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str):
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()

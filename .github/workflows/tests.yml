@@ -20,7 +20,6 @@ jobs:
         with:
           enable-cache: true
 
-      # the tests never load a model, so skip torch -- it is most of the download
-      - run: uv sync --locked --python 3.12 --no-install-package torch
+      - run: uv sync --locked --python 3.12
 
       - run: uv run --no-sync python -m unittest discover tests -v

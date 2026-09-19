@@ -28,18 +28,24 @@ def link_entities(
         similarity_threshold: float = 0.2,
         time_window_hours: float = 48.0,
 ) -> list[list[dict]]:
+    """Group records that are about the same thing and happened close together.
+
+    Greedy, in the order given: each record not yet placed starts a cluster and
+    takes every unplaced record within the time window that is similar enough.
+
+    Only records inside the window can ever join, so each one is compared with
+    those alone -- found by binary search over the records sorted by time --
+    rather than with every other record. The result is the same as comparing all
+    pairs; the cost grows with the number of records times how many fall in a
+    window, not with the square of the total.
+    """
     if not records:
         return []
 
-    # pairwise similarity in one matmul instead of a python loop per pair
     unit = _unit_embeddings(records)
-    similarity = unit @ unit.T
-
     hours = np.array([_epoch_hours(r["timestamp"]) for r in records])
-    time_gap = np.abs(hours[:, None] - hours[None, :])
-
-    eligible = (similarity >= similarity_threshold) & (time_gap <= time_window_hours)
-    np.fill_diagonal(eligible, False)
+    by_time = np.argsort(hours, kind="stable")
+    sorted_hours = hours[by_time]
 
     clusters: list[list[dict]] = []
     assigned = np.zeros(len(records), dtype=bool)
@@ -47,9 +53,15 @@ def link_entities(
     for i in range(len(records)):
         if assigned[i]:
             continue
-
         assigned[i] = True
-        members = np.flatnonzero(eligible[i] & ~assigned)
+
+        lo = np.searchsorted(sorted_hours, hours[i] - time_window_hours, side="left")
+        hi = np.searchsorted(sorted_hours, hours[i] + time_window_hours, side="right")
+        candidates = by_time[lo:hi]
+        candidates = np.sort(candidates[~assigned[candidates]])
+
+        similar = (unit[candidates] @ unit[i]) >= similarity_threshold
+        members = candidates[similar]
         assigned[members] = True
 
         clusters.append([records[i]] + [records[j] for j in members])

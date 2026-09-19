@@ -8,6 +8,9 @@
     sync                sync now
     status              is it running, and what is it doing
     open                open the window in your browser
+    service install     start the service at login (--menubar on macOS adds the menu)
+    service uninstall | start | stop | status | logs
+    service hotkey      how to bind a key to `record` on this OS
 
 Everything but `serve` talks to the running service, so it starts instantly and
 works from any shell or shortcut.
@@ -16,6 +19,12 @@ works from any shell or shortcut.
 import argparse
 import sys
 import time
+from pathlib import Path
+
+if __package__ in (None, ""):
+    # run as a file -- how a keyboard shortcut calls it, from no particular
+    # directory -- so put the repo root where `import src` can find it
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _ago(moment: float | None) -> str:
@@ -48,7 +57,14 @@ def main(argv: list[str]) -> int:
     commands.add_parser("status", help="what the service is doing")
     commands.add_parser("open", help="open the window")
 
+    service = commands.add_parser("service", help="run at login, and manage it")
+    service.add_argument("action", choices=["install", "uninstall", "start", "stop", "status", "logs", "hotkey"])
+    service.add_argument("--menubar", action="store_true", help="macOS: also start the menubar app")
+
     args = parser.parse_args(argv)
+
+    if args.command == "service":
+        return _service(args)
 
     if args.command == "serve":
         from src.core.serve import serve
@@ -92,6 +108,39 @@ def main(argv: list[str]) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    return 0
+
+
+def _service(args) -> int:
+    from src.config.paths import log_dir
+    from src.core import autostart, client
+
+    manager = autostart.backend()
+
+    if args.action == "hotkey":
+        print(autostart.hotkey_help())
+    elif args.action == "install":
+        manager.install(menubar=args.menubar)
+        print("installed: starts at login, restarts if it crashes")
+        print("bind a key next -- see: python -m src service hotkey")
+    elif args.action == "uninstall":
+        manager.uninstall()
+        print("uninstalled")
+    elif args.action == "start":
+        manager.start()
+    elif args.action == "stop":
+        manager.stop()
+    elif args.action == "status":
+        print(f"installed: {'yes' if manager.installed() else 'no'}")
+        print(f"running:   {client.base_url() + '/' if client.is_running() else 'no'}")
+        print(f"log:       {log_dir() / 'service.log'}")
+    elif args.action == "logs":
+        path = log_dir() / "service.log"
+        if not path.exists():
+            print(f"no log yet at {path}")
+            return 1
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        print("\n".join(lines[-60:]))
     return 0
 
 

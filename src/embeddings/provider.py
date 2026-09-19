@@ -37,9 +37,16 @@ class EmbeddingProvider:
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
-        self.tokenizer = Tokenizer.from_file(_fetch("tokenizer.json"))
+        path = _fetch("tokenizer.json")
+        self.tokenizer = Tokenizer.from_file(path)
         self.tokenizer.enable_truncation(max_length=MAX_TOKENS)
         self.tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")
+        # the same vocabulary without truncation or padding, for measuring text --
+        # a separate instance, since those settings are global to a tokenizer. The
+        # model's tokenizer.json ships with both set (to 128), so switch them off
+        self.counting_tokenizer = Tokenizer.from_file(path)
+        self.counting_tokenizer.no_truncation()
+        self.counting_tokenizer.no_padding()
 
         options = ort.SessionOptions()
         options.log_severity_level = 3

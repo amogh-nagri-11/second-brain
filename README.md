@@ -43,7 +43,7 @@ flowchart LR
 
     GH --> EMB
     CAL --> EMB
-    EMB["MiniLM embeddings"] --> DB[("SQLite<br/>activity_records")]
+    EMB["MiniLM via ONNX<br/>chunked to 256 tokens"] --> DB[("SQLite<br/>items · chunks · FTS5")]
     DB --> CL["entity linking<br/>cosine + 48h window"]
 
     subgraph query["a question"]
@@ -54,7 +54,7 @@ flowchart LR
     W --> S
     TYPE --> S
     CL --> S
-    S["search<br/>semantic + keyword + recency"] --> LLM["Groq<br/>gpt-oss-120b"]
+    S["search<br/>semantic + BM25 + recency"] --> LLM["Groq<br/>gpt-oss-120b"]
     LLM --> SPK["spoken"]
     LLM --> WRI["written"]
 ```
@@ -64,6 +64,13 @@ Ranking blends three signals, since none of them is sufficient alone:
 ```
 0.70 × semantic   +   0.15 × keyword   +   0.15 × recency
 ```
+
+- **Semantic** is the cosine between the question and the item's best-matching
+  chunk. Long text is split into overlapping windows of the model's own tokens,
+  so nothing past its 256-token limit is ignored.
+- **Keyword** is BM25 from SQLite's FTS5 index (stemmed, titles weighted double,
+  searching field values like attendees and locations too), scaled so each
+  question's best match scores 1.
 
 The recency term matters more than its weight suggests: without it, nothing in
 the system encodes what *"latest"* means, and a question about the newest commit
@@ -210,9 +217,9 @@ Questions and answers are kept in the database, so history survives a restart.
 ```
 src/
 ├── ingestion/    github.py · calendar.py      what happened
-├── embeddings/   provider.py                  MiniLM, shared instance
-├── storage/      db.py · types.py             SQLite + the record shape
-├── entities/     linking.py                   commits → coherent clusters
+├── embeddings/   provider · chunking          MiniLM through ONNX Runtime; splitting long text
+├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
+├── entities/     linking.py                   items → clusters, compared only within 48h
 ├── retrieval/    search.py                    semantic + keyword + recency
 ├── synthesis/    answer.py                    one call, two answers
 ├── core/         service · api · serve · client · autostart   the background service
@@ -237,7 +244,22 @@ src/
   than push date, so work committed locally and pushed days later would
   otherwise land behind the cursor and never be ingested.
 - **Branches are walked default-first**, deduped by SHA, so anything still tagged
-  with a topic branch is work that hasn't landed.
+  with a topic branch is work that hasn't landed. Each sync asks GitHub whether
+  those commits have since reached the default branch, and drops the tag once they
+  have.
+- **One shape for every source.** An item has a kind (`commit`, `event`), a time
+  normalised to UTC, and `fields` holding what that kind can be filtered on:
+  repo, branch and merged for a commit; attendees and location for an event. A
+  new source adds fields, not columns.
+- **Deletions are kept, not erased.** A calendar event that no longer comes back
+  from its window is marked deleted and drops out of answers; if it reappears,
+  it's restored.
+- **No torch.** The embedding model runs through ONNX Runtime, reproducing
+  sentence-transformers exactly (the vectors match to six decimal places), for
+  about 650 MB less install.
+- **Every retrieval change is measured.** Swapping the model, the schema, the
+  keyword scoring and chunking were each run against the same fixed questions
+  before being kept.
 
 ## Known limitations
 
@@ -248,5 +270,11 @@ src/
   you can read that file too.
 - The Windows and Linux service setups are covered by tests of the files they
   generate, but have only been run for real on macOS.
-- Questions about a date (*"what did I ship on 21 Aug?"*) rank poorly, because
-  embeddings barely see dates. The retrieval check tracks this.
+- Questions about a date (*"what did I ship on 21 Aug?"*) or about *"latest"*
+  rank poorly, because the ranking has no idea of a date range or an order; they
+  need real queries rather than similarity. The retrieval check tracks both.
+- A branch merged by squash or rebase lands as new commits, so the originals keep
+  their branch label.
+- Deletions are only noticed within the week each sync re-reads, and only for the
+  calendar: GitHub skips repos with no recent pushes, so a missing commit proves
+  nothing.

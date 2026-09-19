@@ -85,7 +85,10 @@ def synthesize_answer(
     context = format_cluster_from_prompt(cluster)
     # without this "yesterday" and "this week" have nothing to be measured from, and
     # the model guesses a date out of its training data instead
-    today = (now or datetime.now().astimezone()).strftime("%A %d %b %Y, %-I:%M %p %Z")
+    # the hour is formatted by hand: "%-I" is a glibc/BSD extension that raises
+    # ValueError on Windows
+    moment = now or datetime.now().astimezone()
+    today = f"{moment:%A %d %b %Y}, {moment.hour % 12 or 12}:{moment:%M %p %Z}"
 
     prompt = f"""You are answering a question about the user's own recent activity, based only on the records below.
 

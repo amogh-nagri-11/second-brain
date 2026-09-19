@@ -222,15 +222,20 @@
 </div>
 
 <script>
+// written into the page by the service; it changes every launch
+const TOKEN = '__SECOND_BRAIN_TOKEN__';
+
 let pending = false;
 let lastKey = null;
 let recording = false;
+let lastSyncAt = null;
+let syncing = false;
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* the written answer is markdown-ish: bullets and bold, nothing more */
 function render(text) {
-  const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const bold = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   const out = [];
   let list = null;
@@ -251,6 +256,18 @@ function render(text) {
   return out.join('');
 }
 
+function clock(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function ago(seconds) {
+  if (!seconds) return 'never';
+  const minutes = Math.floor((Date.now() / 1000 - seconds) / 60);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + 'm ago';
+  return Math.floor(minutes / 60) + 'h ago';
+}
+
 function showThinking() {
   $('answer').innerHTML =
     '<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> working through your records…</div>';
@@ -262,9 +279,7 @@ function showAnswer(entry) {
     return;
   }
   $('answer').innerHTML =
-    '<div class="heard"><span>heard:</span> ' +
-      entry.question.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) +
-    '</div>' +
+    '<div class="heard"><span>heard:</span> ' + esc(entry.question) + '</div>' +
     '<div class="body">' + render(entry.written || entry.spoken) + '</div>' +
     '<div class="tools">' +
       '<button id="copy">Copy for docs</button>' +
@@ -282,9 +297,11 @@ function showAnswer(entry) {
 async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Second-Brain-Token': TOKEN },
     body: JSON.stringify(body || {}),
   });
+  // the service restarted and has a new token: reload to pick it up
+  if (res.status === 401) { location.reload(); return; }
   if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   return res.json();
 }
@@ -304,7 +321,7 @@ async function ask() {
     showAnswer(entry);
     lastKey = entry.asked_at;
   } catch (err) {
-    $('error').innerHTML = '<div class="err">' + err.message + '</div>';
+    $('error').innerHTML = '<div class="err">' + esc(err.message) + '</div>';
     showAnswer(null);
   } finally {
     pending = false;
@@ -316,46 +333,55 @@ $('ask').onclick = ask;
 $('q').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); ask(); }
 });
-$('mic').onclick = async () => {
-  recording = !recording;
-  await post('/api/record', { recording });
-};
+$('mic').onclick = () => post('/api/record', { recording: !recording });
 
-async function tick() {
-  try {
-    const s = await fetch('/api/state').then(r => r.json());
-
-    $('p-speak').textContent = s.speaking ? 'speaking' : (s.recording ? 'listening' : 'idle');
-    $('p-speak').className = 'pill' + (s.speaking || s.recording ? ' on' : '');
-
-    $('p-sync').textContent = s.syncing ? 'syncing…' : 'sync ' + s.last_sync;
-    $('p-sync').className = 'pill' + (s.syncing ? ' busy' : '');
-
-    recording = s.recording;
-    $('mic').className = 'mic' + (s.recording ? ' live' : '');
-    $('rec-hint').textContent = s.recording ? 'listening — click ● to stop' : '';
-
-    // an answer can arrive from the hotkey while this page is open
-    const latest = s.history[0];
-    if (!pending && latest && latest.asked_at !== lastKey) {
-      showAnswer(latest);
-      lastKey = latest.asked_at;
-    }
-
-    $('history').innerHTML = s.history.slice(1).map((h, i) =>
-      '<button class="item" data-i="' + (i + 1) + '">' +
-        '<time>' + h.at + '</time><span>' + h.question + '</span>' +
-      '</button>'
-    ).join('') || '<div class="empty">Nothing earlier yet.</div>';
-
-    for (const el of document.querySelectorAll('.item')) {
-      el.onclick = () => post('/api/replay', { index: Number(el.dataset.i) });
-    }
-  } catch (e) { /* app stopped; the next tick will pick it back up */ }
+function renderSync() {
+  $('p-sync').textContent = syncing ? 'syncing…' : 'sync ' + ago(lastSyncAt);
+  $('p-sync').className = 'pill' + (syncing ? ' busy' : '');
 }
 
-tick();
-setInterval(tick, 1000);
+function apply(s) {
+  const busy = s.speaking ? 'speaking' : s.recording ? 'listening' : s.thinking ? 'thinking' : 'idle';
+  $('p-speak').textContent = busy;
+  $('p-speak').className = 'pill' + (busy !== 'idle' ? ' on' : '');
+
+  syncing = s.syncing;
+  lastSyncAt = s.last_sync_at;
+  renderSync();
+
+  recording = s.recording;
+  $('mic').className = 'mic' + (s.recording ? ' live' : '');
+  $('rec-hint').textContent = s.recording ? 'listening — stops when you go quiet, or click ●' : '';
+
+  // an answer can arrive from the hotkey while this page is open
+  const latest = s.history[0];
+  if (!pending && latest && latest.asked_at !== lastKey) {
+    showAnswer(latest);
+    lastKey = latest.asked_at;
+  }
+
+  $('history').innerHTML = s.history.slice(1).map((h, i) =>
+    '<button class="item" data-i="' + (i + 1) + '">' +
+      '<time>' + clock(h.asked_at) + '</time><span>' + esc(h.question) + '</span>' +
+    '</button>'
+  ).join('') || '<div class="empty">Nothing earlier yet.</div>';
+
+  for (const el of document.querySelectorAll('.item')) {
+    el.onclick = () => post('/api/replay', { index: Number(el.dataset.i) });
+  }
+}
+
+// pushed by the service on every change; EventSource reconnects by itself if the
+// service restarts, and the first request after that reloads for the new token
+const events = new EventSource('/api/events?token=' + encodeURIComponent(TOKEN));
+events.onmessage = e => apply(JSON.parse(e.data).state);
+events.onerror = async () => {
+  const res = await fetch('/api/state', { headers: { 'X-Second-Brain-Token': TOKEN } }).catch(() => null);
+  if (res && res.status === 401) location.reload();
+};
+
+// only the "4m ago" text moves on its own
+setInterval(renderSync, 30000);
 $('q').focus();
 </script>
 </body>

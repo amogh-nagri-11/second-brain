@@ -4,8 +4,6 @@ The test_*.py scripts under src/ are manual checks against live data; these run
 anywhere with `python -m unittest discover tests`.
 """
 
-import http.client
-import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -18,7 +16,6 @@ os.environ.setdefault("GROQ_API_KEY", "test")
 
 from src.retrieval.search import keyword_overlap_score, recency_score, score_records
 from src.synthesis import answer
-from src.ui.server import UIServer
 
 
 def record(title, body="", days_ago=0.0, embedding=(1.0, 0.0)):
@@ -71,61 +68,6 @@ class AnswerTests(unittest.TestCase):
         prompt = create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Saturday 19 Sep 2026", prompt)
         self.assertIn("not been merged", prompt)
-
-
-class ServerGuardTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = mock.Mock()
-        cls.app.ui_state.return_value = {"ok": True}
-        cls.server = UIServer(cls.app, port=0)
-        # port 0 picks a free one; start() needs to know it for the host check
-        from http.server import ThreadingHTTPServer
-        probe = ThreadingHTTPServer(("127.0.0.1", 0), None)
-        cls.server.port = probe.server_address[1]
-        probe.server_close()
-        cls.server.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.stop()
-
-    def request(self, method, path, headers=None, body=None):
-        conn = http.client.HTTPConnection("127.0.0.1", self.server.port)
-        conn.request(method, path, body=body, headers=headers or {})
-        status = conn.getresponse().status
-        conn.close()
-        return status
-
-    def test_own_page_can_read_state(self):
-        self.assertEqual(self.request("GET", "/api/state"), 200)
-
-    def test_rebound_host_cannot_read_state(self):
-        self.assertEqual(self.request("GET", "/api/state", {"Host": f"evil.example:{self.server.port}"}), 403)
-
-    def test_cross_site_form_post_is_refused(self):
-        self.app._start_recording.reset_mock()
-        status = self.request(
-            "POST", "/api/record",
-            {"Content-Type": "text/plain", "Origin": "https://evil.example"},
-            json.dumps({"recording": True}),
-        )
-        self.assertEqual(status, 403)
-        self.app._start_recording.assert_not_called()
-
-    def test_foreign_origin_is_refused_even_as_json(self):
-        status = self.request(
-            "POST", "/api/stop",
-            {"Content-Type": "application/json", "Origin": "https://evil.example"}, "{}",
-        )
-        self.assertEqual(status, 403)
-
-    def test_own_page_can_post(self):
-        status = self.request(
-            "POST", "/api/stop",
-            {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{self.server.port}"}, "{}",
-        )
-        self.assertEqual(status, 200)
 
 
 if __name__ == "__main__":

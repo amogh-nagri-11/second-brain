@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
 
 from src.config.google_auth import get_calendar_credentials
+from src.storage.db import event_fields
 from src.storage.types import ActivityRecord
 
 # Google expands recurring events one instance at a time when singleEvents=True, and
@@ -43,15 +44,19 @@ def _list_events(service, time_min: datetime, time_max: datetime) -> list[dict]:
 
 
 def _to_record(event: dict) -> ActivityRecord:
-    start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+    start = event.get("start", {})
+    all_day = "dateTime" not in start
 
     return ActivityRecord(
         id=f"calendar:{event['id']}",
         source="calendar",
-        timestamp=start,
+        kind="event",
+        timestamp=start.get("dateTime") or start.get("date"),
+        all_day=all_day,
         title=event.get("summary", "(no title)"),
         body=event.get("description", ""),
         url=event.get("htmlLink"),
+        fields=event_fields(event),
         raw=event,
     )
 

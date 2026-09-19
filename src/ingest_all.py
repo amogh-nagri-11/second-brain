@@ -19,7 +19,8 @@ def main():
         if "--full" in sys.argv:
             print("Full re-ingest: clearing sync cursors and stored records")
             conn.execute("DELETE FROM sync_state")
-            conn.execute("DELETE FROM activity_records")
+            conn.execute("DELETE FROM chunks")
+            conn.execute("DELETE FROM items")
             conn.commit()
 
         run_sync(conn)

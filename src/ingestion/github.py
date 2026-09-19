@@ -36,12 +36,20 @@ def _commit_record(repo, commit, branch: str) -> ActivityRecord:
     return ActivityRecord(
         id=f"github:commit:{commit.sha}",
         source="github",
+        kind="commit",
         # repo name is the main thing distinguishing one commit from another
         # once several repos share the store, so it belongs in the embedded text
         title=f"{label}: {subject}",
         body=f"{repo.full_name} ({branch})\n\n{message}",
         timestamp=commit.commit.author.date.isoformat(),
         url=commit.html_url,
+        fields={
+            "repo": repo.name,
+            "full_name": repo.full_name,
+            "branch": branch,
+            "merged": branch == repo.default_branch,
+            "sha": commit.sha,
+        },
         raw=commit.raw_data,
     )
 

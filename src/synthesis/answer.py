@@ -1,6 +1,8 @@
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+
+from dateutil import parser as date_parser
 
 from openai import OpenAI
 from src.config.env import groq_api_key
@@ -28,6 +30,28 @@ def _trim(body: str) -> str:
     return body[:MAX_BODY_CHARS].rstrip() + "..."
 
 
+def _when(record: dict) -> str:
+    """Local time, since that's what the answer should talk in; just the date for
+    an all-day entry, which has no time to convert."""
+    moment = date_parser.parse(record["timestamp"])
+    if record.get("all_day"):
+        return f"{moment:%Y-%m-%d}, all day"
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().isoformat(timespec="minutes")
+
+
+def _details(record: dict) -> str:
+    """The fields worth reading that aren't already in the title."""
+    fields = record.get("fields") or {}
+    parts = []
+    if fields.get("attendees"):
+        parts.append("with " + ", ".join(fields["attendees"]))
+    if fields.get("location"):
+        parts.append("at " + fields["location"])
+    return f" [{'; '.join(parts)}]" if parts else ""
+
+
 def format_cluster_from_prompt(cluster: list[dict]) -> str:
     """Best-ranked records carry their text; the rest are one line each.
 
@@ -37,7 +61,7 @@ def format_cluster_from_prompt(cluster: list[dict]) -> str:
     """
     lines = []
     for r in cluster:
-        header = f"- [{r['source']}] {r['title']} ({r['timestamp']})"
+        header = f"- [{r['source']}] {r['title']}{_details(r)} ({_when(r)})"
         if r.get("detailed", True) and r["body"].strip():
             lines.append(f"{header}\n {_trim(r['body'])}")
         else:

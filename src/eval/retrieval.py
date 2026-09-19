@@ -17,25 +17,30 @@ snapshot are about your own commits and calendar:
     snapshot.db      the records the questions were written against
     runs/<label>.json
 
-Two things are pinned so runs compare like for like:
-  - the records come from the snapshot and are re-embedded with whatever model the
-    code currently uses, so a model swap is measured on identical text
+Each run builds a throwaway copy of the snapshot the way the app would: migrated
+to the current schema, chunked and embedded with the current code, clustered --
+then asks through the same retrieve() the app answers from. Two things are pinned
+so runs compare like for like:
+  - the text comes from the snapshot, so a model or chunking change is measured on
+    identical input
   - "now" is questions.json's as_of, so recency scores don't drift between runs
 """
 
 import argparse
 import json
+import shutil
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 from dateutil import parser as date_parser
 
 from src.config.paths import data_dir, db_path
-from src.embeddings.provider import get_embedder
 from src.entities.linking import link_entities
-from src.pipeline import MAX_CONTEXT_RECORDS, TOP_K_CLUSTERS, _context_records
-from src.retrieval.search import score_records, search
+from src.pipeline import MAX_CONTEXT_RECORDS, retrieve
+from src.storage.db import get_connection, load_all_records, load_clusters, save_clusters
+from src.sync import reembed_if_stale
 
 TOP_K = 10
 
@@ -55,14 +60,17 @@ def take_snapshot():
     print(f"snapshot written to {target}")
 
 
-def load_snapshot_records() -> list[dict]:
-    conn = sqlite3.connect(eval_dir() / "snapshot.db")
-    rows = conn.execute("SELECT id, source, timestamp, title, body FROM activity_records").fetchall()
-    conn.close()
-    return [
-        {"id": r[0], "source": r[1], "timestamp": r[2], "title": r[3], "body": r[4], "url": None, "raw": {}}
-        for r in rows
-    ]
+def build_clusters(workdir: Path) -> list[list[dict]]:
+    """The snapshot, brought up to date by the app's own code in a scratch copy."""
+    copy = workdir / "eval.db"
+    shutil.copy(eval_dir() / "snapshot.db", copy)
+    conn = get_connection(copy)
+    try:
+        reembed_if_stale(conn, log=lambda _line: None, force=True)
+        save_clusters(conn, link_entities(load_all_records(conn)))
+        return load_clusters(conn)
+    finally:
+        conn.close()
 
 
 def _reciprocal_rank(ranked_ids: list[str], expected: set[str]) -> float:
@@ -74,14 +82,10 @@ def _reciprocal_rank(ranked_ids: list[str], expected: set[str]) -> float:
 
 def run(questions: dict) -> dict:
     now = date_parser.parse(questions["as_of"])
-    records = load_snapshot_records()
+    with tempfile.TemporaryDirectory() as workdir:
+        clusters = build_clusters(Path(workdir))
 
-    embedder = get_embedder()
-    vectors = embedder.embed_batch([f"{r['title']}\n{r['body']}" for r in records])
-    for record, vector in zip(records, vectors):
-        record["embedding"] = vector
-    clusters = link_entities(records)
-
+    records = [r for cluster in clusters for r in cluster]
     known_ids = {r["id"] for r in records}
     results = []
 
@@ -91,11 +95,9 @@ def run(questions: dict) -> dict:
         if missing:
             raise SystemExit(f"{item['q']!r} expects ids not in the snapshot: {sorted(missing)}")
 
-        query_embedding = embedder.embed(item["q"])
-        ranked = score_records(query_embedding, item["q"], records, now=now)
-        top_clusters = search(query_embedding, item["q"], clusters, top_k=TOP_K_CLUSTERS, now=now)
-        context_ids = {r["id"] for r in _context_records(top_clusters, ranked)}
-        ranked_ids = [r["id"] for r, _score in ranked]
+        context, ranked = retrieve(item["q"], clusters, now=now)
+        context_ids = {r["id"] for r in context}
+        ranked_ids = [r["id"] for r in ranked]
 
         results.append({
             "q": item["q"],

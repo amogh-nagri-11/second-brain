@@ -11,6 +11,18 @@ from src.entities.linking import cosine_similarity
 # ranks, short enough that "latest" and "last" mean something.
 RECENCY_HALF_LIFE_DAYS = 45
 
+def semantic_score(query_embedding: np.ndarray, record: dict) -> float:
+    """How close the question is to the item's best-matching piece. A long item
+    is split into chunks, and one relevant paragraph should count in full rather
+    than be averaged away by the rest."""
+    chunks = record.get("chunk_embeddings")
+    if chunks is None:
+        return cosine_similarity(query_embedding, record["embedding"])
+    query = np.asarray(query_embedding, dtype=np.float32)
+    norms = np.linalg.norm(chunks, axis=1) * max(float(np.linalg.norm(query)), 1e-12)
+    return float(np.max((chunks @ query) / np.clip(norms, 1e-12, None)))
+
+
 def cluster_embedding(cluster: list[dict]) -> np.ndarray: 
     embeddings = np.stack([r['embedding'] for r in cluster])
     return embeddings.mean(axis=0)
@@ -104,7 +116,7 @@ def score_records(
     scored = [
         (
             record,
-            (0.7 * cosine_similarity(query_embedding, record["embedding"]))
+            (0.7 * semantic_score(query_embedding, record))
             + (0.15 * keyword_overlap_score(query_text, [record]))
             + (0.15 * recency_score([record], now)),
         )

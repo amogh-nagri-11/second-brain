@@ -7,11 +7,11 @@ here (once per sync) rather than on every question.
 
 from datetime import datetime, timedelta, timezone
 
-import numpy as np
 from dateutil import parser as date_parser
 
 from src.config.env import get_secret
 from src.config.paths import google_client_path, google_token_path
+from src.embeddings.chunking import CHUNKING_VERSION, chunk_texts
 from src.embeddings.provider import MODEL_ID, get_embedder
 from src.entities.linking import link_entities
 from src.ingestion.calendar import fetch_recent_events
@@ -22,9 +22,12 @@ from src.storage.db import (
     get_last_synced_at,
     get_meta,
     set_meta,
+    item_texts,
     load_all_records,
+    record_fingerprint,
+    replace_chunks,
     save_clusters,
-    save_record,
+    save_item,
     set_last_synced_at,
 )
 
@@ -60,22 +63,32 @@ def _fetch(conn, source: str) -> list:
     return fetch(_since_for(conn, source))
 
 
-def reembed_if_model_changed(conn, log=print) -> bool:
-    """Vectors from two models can't be compared with each other, so a different
-    model means every stored record is embedded again, from the text already
-    stored -- nothing is fetched."""
-    if get_meta(conn, "embedding_model") == MODEL_ID:
+def _embedding_version() -> str:
+    return f"{MODEL_ID}|{CHUNKING_VERSION}"
+
+
+def embed_chunks(title: str, body: str) -> list[tuple[str, list[float]]]:
+    texts = chunk_texts(title, body)
+    return list(zip(texts, get_embedder().embed_batch(texts)))
+
+
+def reembed_if_stale(conn, log=print, force: bool = False) -> bool:
+    """Vectors from two models (or two ways of chunking) can't be compared with
+    each other, so a change to either means every item is chunked and embedded
+    again, from the text already stored -- nothing is fetched."""
+    if not force and get_meta(conn, "embedding_model") == _embedding_version():
         return False
 
-    rows = conn.execute("SELECT id, title, body FROM activity_records").fetchall()
-    vectors = get_embedder().embed_batch([f"{title}\n{body}" for _id, title, body in rows])
-    conn.executemany(
-        "UPDATE activity_records SET embedding = ? WHERE id = ?",
-        [(np.array(vector, dtype=np.float32).tobytes(), row[0]) for row, vector in zip(rows, vectors)],
-    )
-    set_meta(conn, "embedding_model", MODEL_ID)
-    log(f"[sync] re-embedded {len(rows)} records with {MODEL_ID}")
-    return bool(rows)
+    items = item_texts(conn)
+    texts = [chunk_texts(title, body) for _id, title, body in items]
+    vectors = iter(get_embedder().embed_batch([t for pieces in texts for t in pieces]))
+
+    with conn:
+        for (item_id, _title, _body), pieces in zip(items, texts):
+            replace_chunks(conn, item_id, [(text, next(vectors)) for text in pieces])
+    set_meta(conn, "embedding_model", _embedding_version())
+    log(f"[sync] re-embedded {len(items)} items with {_embedding_version()}")
+    return bool(items)
 
 
 def run_sync(conn=None, log=print) -> dict:
@@ -87,9 +100,8 @@ def run_sync(conn=None, log=print) -> dict:
     conn = conn or get_connection()
 
     try:
-        reembedded = reembed_if_model_changed(conn, log)
+        reembedded = reembed_if_stale(conn, log)
         known = existing_fingerprints(conn)
-        embedder = get_embedder()
 
         added = 0
         updated = 0
@@ -117,13 +129,12 @@ def run_sync(conn=None, log=print) -> dict:
                 continue
 
             for record in records:
-                fingerprint = (record.title, record.body)
+                fingerprint = record_fingerprint(record)
                 if known.get(record.id) == fingerprint:
                     skipped += 1
                     continue
 
-                embedding = embedder.embed(f"{record.title}\n{record.body}")
-                save_record(conn, record, embedding)
+                save_item(conn, record, embed_chunks(record.title, record.body))
 
                 if record.id in known:
                     updated += 1

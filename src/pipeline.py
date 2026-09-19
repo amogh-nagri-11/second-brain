@@ -78,6 +78,18 @@ def _context_records(results, ranked: list[tuple[dict, float]]) -> list[dict]:
     return records
 
 
+def retrieve(query_text: str, clusters: list[list[dict]], now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """(the records the model is shown, every record ranked best first).
+
+    The one path from a question to its context -- the app answers from it and the
+    retrieval check scores it, so the check measures what the app actually does.
+    """
+    query_embedding = get_embedder().embed(query_text)
+    results = search(query_embedding, query_text, clusters, top_k=TOP_K_CLUSTERS, now=now)
+    ranked = score_records(query_embedding, query_text, [r for c in clusters for r in c], now=now)
+    return _context_records(results, ranked), [record for record, _score in ranked]
+
+
 def get_answer(query_text: str) -> Answer:
     conn = get_connection()
     try:
@@ -88,14 +100,11 @@ def get_answer(query_text: str) -> Answer:
     if not clusters:
         return Answer(spoken="I haven't ingested anything yet", written="")
 
-    query_embedding = get_embedder().embed(query_text)
-
-    results = search(query_embedding, query_text, clusters, top_k=TOP_K_CLUSTERS)
-    ranked = score_records(query_embedding, query_text, [r for c in clusters for r in c])
-    if not ranked:
+    context, _ranked = retrieve(query_text, clusters)
+    if not context:
         return Answer(spoken="I don't have anything relating to that yet", written="")
 
     try:
-        return synthesize_answer(query_text, _context_records(results, ranked))
+        return synthesize_answer(query_text, context)
     except MissingCredential as error:
         return Answer(spoken="I need a Groq API key before I can answer", written=str(error))

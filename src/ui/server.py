@@ -15,10 +15,17 @@ PORT = 8765
 
 PAGE = Path(__file__).with_name("index.html")
 
+# binding to loopback keeps other machines out, but not other web pages: any site
+# open in the browser can fire requests at 127.0.0.1, and one that rebinds its own
+# DNS name to 127.0.0.1 can read the replies too. Only these names are ours.
+def allowed_hosts(port: int) -> set[str]:
+    return {f"127.0.0.1:{port}", f"localhost:{port}"}
+
 
 class _Handler(BaseHTTPRequestHandler):
     # set by the factory below
     app = None
+    allowed_hosts: set[str] = set()
 
     def log_message(self, *args):
         # the default handler writes a line per request to stderr, which would bury
@@ -47,9 +54,31 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return {}
 
+    def _trusted(self, write: bool) -> bool:
+        """Refuse anything that didn't come from our own page.
+
+        A rebinding site arrives with its own name in Host, so checking Host stops it
+        reading state. Writes also need an Origin of our own, if one is sent, and a
+        JSON content type -- a cross-site page can only send JSON after a CORS
+        preflight, which this server never approves -- so a page can't start the
+        microphone or spend API calls by posting a form here.
+        """
+        if self.headers.get("Host") not in self.allowed_hosts:
+            return False
+        if not write:
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None and origin.removeprefix("http://") not in self.allowed_hosts:
+            return False
+        content_type = self.headers.get("Content-Type", "")
+        return content_type.split(";")[0].strip() == "application/json"
+
     # --- routes ---------------------------------------------------------------
 
     def do_GET(self):
+        if not self._trusted(write=False):
+            self._json({"error": "forbidden"}, 403)
+            return
         if self.path in ("/", "/index.html"):
             # read per request so edits to the page show up on reload
             self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
@@ -59,6 +88,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self._trusted(write=True):
+            self._json({"error": "forbidden"}, 403)
+            return
         if self.path == "/api/ask":
             question = (self._body().get("question") or "").strip()
             if not question:
@@ -104,11 +136,15 @@ class UIServer:
         return f"http://{self.host}:{self.port}/"
 
     def start(self):
-        handler = type("Handler", (_Handler,), {"app": self._app})
+        handler = type(
+            "Handler", (_Handler,), {"app": self._app, "allowed_hosts": allowed_hosts(self.port)}
+        )
         self._server = ThreadingHTTPServer((self.host, self.port), handler)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
     def stop(self):
         if self._server is not None:
             self._server.shutdown()
+            # shutdown() only stops the loop; the listening socket stays bound
+            self._server.server_close()
             self._server = None

@@ -68,6 +68,7 @@ class AnswerTests(unittest.TestCase):
         prompt = create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Saturday 19 Sep 2026", prompt)
         self.assertIn("not been merged", prompt)
+        self.assertIn("#<number> (<state>)", prompt)
 
 
 if __name__ == "__main__":

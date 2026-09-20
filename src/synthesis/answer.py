@@ -136,6 +136,8 @@ It is now {today}. Resolve relative dates in the question ("yesterday", "last we
 
 Commit titles read "<repo>: <subject>" when the commit is on the repo's default branch, and "<repo> [<branch>]: <subject>" when it is only on another branch -- that is, work that has not been merged yet. Use this when asked what has or hasn't landed.
 
+Pull request titles read "<repo> #<number> (<state>): <subject>", where the state is merged, open or closed. "closed" means it was closed without merging, so it does not count as merged. A pull request on someone else's project is named "<owner>/<repo> #<number> (<state>, external)" and is dated when it merged; one of your own repos is named by the repo alone. Treat a commit and a pull request as separate things: a question about pull requests is only about the records that have a #number.
+
 Records:
 {context}
 

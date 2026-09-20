@@ -4,6 +4,7 @@
     ask "question"      ask by text; prints the written answer. Follows on from
                         your recent questions -- pass --new to start a topic
     new                 forget the conversation so far
+    notes [path]        where notes are read from; pass a path to change it
     record [on|off]     start or stop listening; toggles with no argument --
                         this is the command to bind to a keyboard shortcut
     stop                stop speaking
@@ -21,6 +22,7 @@ works from any shell or shortcut.
 import argparse
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -57,6 +59,9 @@ def main(argv: list[str]) -> int:
 
     commands.add_parser("stop", help="stop speaking")
     commands.add_parser("new", help="start a new topic; the next question stands alone")
+
+    notes = commands.add_parser("notes", help="where your notes are read from")
+    notes.add_argument("path", nargs="?", help="set the folder")
     commands.add_parser("sync", help="sync now")
     commands.add_parser("status", help="what the service is doing")
     commands.add_parser("open", help="open the window")
@@ -91,6 +96,9 @@ def main(argv: list[str]) -> int:
         elif args.command == "stop":
             client.call("POST", "/api/stop")
 
+        elif args.command == "notes":
+            return _notes(args)
+
         elif args.command == "new":
             client.call("POST", "/api/new-topic")
             print("new topic")
@@ -120,6 +128,40 @@ def main(argv: list[str]) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    return 0
+
+
+def _notes(args) -> int:
+    """Where notes are read from, and -- on macOS especially -- whether they can be."""
+    from src.config.settings import set_value
+    from src.ingestion.notes import NotesFolderUnreadable, fetch_recent_notes, notes_dir
+
+    if args.path:
+        folder = Path(args.path).expanduser()
+        set_value("notes_dir", str(folder))
+        print(f"notes folder: {folder}")
+        if not folder.is_dir():
+            print("  it isn't a folder yet -- nothing will be read until it is")
+            return 0
+
+    folder = notes_dir()
+    if folder is None:
+        print("no notes folder set, and no Obsidian vault found")
+        print("  set one with: python -m src notes <path>")
+        return 0
+
+    print(f"notes folder: {folder}")
+    try:
+        records = fetch_recent_notes(datetime.now(timezone.utc))
+    except NotesFolderUnreadable as error:
+        print(f"  unreadable: {error}")
+        # the fix is a permission the user grants, not something the app can do
+        print(f"\n  System Settings > Privacy & Security > Full Disk Access, and add:\n    {sys.executable}")
+        return 1
+
+    print(f"  {len(records)} notes readable")
+    for record in records[:3]:
+        print(f"    - {record.fields['path']}")
     return 0
 
 

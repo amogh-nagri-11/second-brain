@@ -11,9 +11,11 @@ own folder at all on Windows. Data lives in the per-user folder each OS expects:
 SECOND_BRAIN_HOME overrides it, which is what the tests use.
 """
 
+import json
 import os
 import shutil
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 
@@ -88,3 +90,33 @@ def _copy_legacy_files(source_dir: Path, target_dir: Path, log=print):
             shutil.copy2(source, target)
 
         log(f"[paths] copied {source} -> {target}")
+
+
+def _obsidian_config() -> Path:
+    """Where Obsidian keeps its list of vaults, per OS."""
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library/Application Support/obsidian/obsidian.json"
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", home)) / "obsidian/obsidian.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")) / "obsidian/obsidian.json"
+
+
+def obsidian_vault() -> Path | None:
+    """The vault you opened most recently, if Obsidian is installed.
+
+    A guess at a sensible default, nothing more -- the notes folder is a setting,
+    and this is only what it falls back to.
+    """
+    config = _obsidian_config()
+    try:
+        vaults = json.loads(config.read_text(encoding="utf-8")).get("vaults", {})
+    except (OSError, ValueError, AttributeError):
+        return None
+
+    if not isinstance(vaults, dict) or not vaults:
+        return None
+
+    newest = max(vaults.values(), key=lambda vault: vault.get("ts", 0) if isinstance(vault, dict) else 0)
+    path = newest.get("path") if isinstance(newest, dict) else None
+    return Path(path) if path else None

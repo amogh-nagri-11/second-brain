@@ -2,7 +2,7 @@
 
 # Second Brain
 
-**A local question-answering layer over your own activity — commits, pull requests and calendar events — with voice input and spoken answers.**
+**A local question-answering layer over your own activity — commits, pull requests, calendar events and your notes — with voice input and spoken answers.**
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
@@ -32,6 +32,7 @@ copied to the clipboard.
 | Dual output | A concise spoken answer plus a written one with dates and bullets |
 | Branch awareness | Work on a topic branch is shown as `<repo> [fix/logstore…]`, so unmerged work is distinguishable |
 | Pull requests | Every PR you opened, with its state, and your own repos kept apart from other people's projects |
+| Notes | A folder of markdown — your notes are read, never written, so what you decided sits beside what you shipped |
 | Local by default | The database, the embeddings and the speech-to-text all run on the machine |
 
 ## How it works
@@ -117,6 +118,26 @@ uv run python -m src.ingest_all --full   # re-fetch and re-embed everything
 ```
 
 A source that isn't set up is skipped, not treated as an error.
+
+### Notes
+
+Markdown from a folder, read and never written. It defaults to your most recently
+opened Obsidian vault, and any folder works:
+
+```bash
+uv run python -m src notes                    # where it reads from, and whether it can
+uv run python -m src notes ~/Documents/Vault  # read somewhere else
+```
+
+A note is one item: its first heading (or `title:`) is the title, its date comes
+from `date:` front matter, else a `2026-09-20` in the filename, else the file's
+modified time — a daily note belongs on its day, not on the day you last touched
+it. `.obsidian/`, hidden files and anything over 200 KB are skipped.
+
+> **macOS:** `~/Documents`, `~/Desktop` and `~/Downloads` need Full Disk Access
+> before anything can read them, and the folder otherwise looks simply empty.
+> `python -m src notes` says which it is and prints the binary to add under
+> System Settings > Privacy & Security > Full Disk Access.
 
 ### Where things live
 
@@ -220,7 +241,7 @@ Questions and answers are kept in the database, so history survives a restart.
 
 ```
 src/
-├── ingestion/    base · registry · github · github_prs · calendar   what happened
+├── ingestion/    base · registry · github · github_prs · calendar · notes   what happened
 ├── embeddings/   provider · chunking          MiniLM through ONNX Runtime; splitting long text
 ├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
 ├── entities/     linking.py                   items → clusters, compared only within 48h
@@ -230,7 +251,7 @@ src/
 ├── capture/      recorder · transcriber · menubar_app
 ├── output/       speaker.py · speech.py       macOS say, spoken-form rewriting
 ├── ui/           index.html                   the local window
-├── config/       paths · env · google_auth    where files live, credentials
+├── config/       paths · env · settings · google_auth    where files live, credentials
 ├── eval/         retrieval.py                 fixed questions, scored before and after
 ├── sync.py       incremental, per-source cursors
 └── pipeline.py   question → answer
@@ -289,6 +310,12 @@ counting tool offers exactly the kinds the registry declares.
 - **"Opened this month" and "merged this month" are different questions.** A pull
   request is stored at the moment it merged, so a date range can be measured
   against when it was opened instead.
+- **Notes are read, never written.** A bad answer is recoverable; a folder of
+  notes damaged by a bug is not. Capturing new notes by voice would write new
+  files in one folder of its own rather than touch what is already there.
+- **A folder scan sees everything, so deletions span all of history.** Other
+  sources only infer deletions inside the window they fetched; delete a note
+  written years ago and it still leaves the store.
 - **Counting asks the database, not the model.** Retrieval hands the model the
   best-matching records, never the whole store, so counting those gave a total
   that looked complete and wasn't. A question that turns on a number now runs a

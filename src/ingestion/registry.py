@@ -9,8 +9,9 @@ from src.ingestion.base import Registry
 from src.ingestion.calendar import SOURCE as CALENDAR
 from src.ingestion.github import SOURCE as GITHUB_COMMITS
 from src.ingestion.github_prs import SOURCE as GITHUB_PRS
+from src.ingestion.notes import SOURCE as NOTES
 
-REGISTRY = Registry([GITHUB_COMMITS, GITHUB_PRS, CALENDAR])
+REGISTRY = Registry([GITHUB_COMMITS, GITHUB_PRS, CALENDAR, NOTES])
 
 
 def sources() -> Registry:

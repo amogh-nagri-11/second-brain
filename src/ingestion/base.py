@@ -32,6 +32,10 @@ class Source:
     # window that didn't come back has been deleted. Not true of GitHub, which
     # skips repos with no recent pushes
     complete_window: bool = False
+    # stronger: a fetch returns everything there has ever been, whatever the
+    # window -- true of a folder scan, and it means a note deleted years after it
+    # was written still leaves the store
+    complete_history: bool = False
     # anything else to keep stored items current, run after a successful fetch.
     # Takes (conn, log), returns how many items it changed
     after: Callable | None = None

@@ -51,8 +51,14 @@ def _since_for(conn, source: str, first_lookback_days: int = INITIAL_LOOKBACK_DA
     return date_parser.parse(last) - timedelta(hours=OVERLAP_HOURS)
 
 
-def _reconcile(conn, source: str, since: datetime, until: datetime, fetched: set[str]) -> int:
-    start, end = since + RECONCILE_MARGIN, until - timedelta(hours=1)
+def _reconcile(conn, source: str, since: datetime, until: datetime, fetched: set[str],
+               all_history: bool = False) -> int:
+    if all_history:
+        # the fetch covered everything, so anything stored and not returned is gone,
+        # however old or however far in the future it is dated
+        start, end = datetime.min.replace(tzinfo=timezone.utc), datetime.max.replace(tzinfo=timezone.utc)
+    else:
+        start, end = since + RECONCILE_MARGIN, until - timedelta(hours=1)
     if start >= end:
         return 0
     gone = live_ids_between(conn, source, start.isoformat(), end.isoformat()) - fetched
@@ -142,8 +148,9 @@ def run_sync(conn=None, log=print) -> dict:
                     added += 1
                 known[record.id] = fingerprint
 
-            if source.complete_window:
-                gone = _reconcile(conn, name, since, started_at, {r.id for r in records})
+            if source.complete_window or source.complete_history:
+                gone = _reconcile(conn, name, since, started_at, {r.id for r in records},
+                                  all_history=source.complete_history)
                 if gone:
                     log(f"[sync] {name}: {gone} no longer there, marked deleted")
                 deleted += gone

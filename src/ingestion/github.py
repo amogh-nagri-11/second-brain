@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as date_parser
 from github import Github, GithubException
 
-from src.config.env import github_token
+from src.config.env import get_secret, github_token
+from src.ingestion.base import Source
 from src.storage.types import ActivityRecord
 
 
@@ -145,3 +146,42 @@ def as_merged(record: ActivityRecord) -> ActivityRecord:
         "title": f"{repo_name}: {subject}",
         "fields": {**record.fields, "merged": True},
     })
+
+
+# how far back, and how many, unmerged commits are re-checked each sync
+MERGE_CHECK_DAYS = 180
+MERGE_CHECK_LIMIT = 50
+
+
+def update_merged(conn, log) -> int:
+    """Relabel commits that have reached their default branch since we stored them.
+
+    A commit's title carries its branch, which is how "what hasn't landed" is
+    answered, so a stored one goes stale the moment its branch merges. Kept here
+    rather than in sync because it is a fact about GitHub, not about syncing.
+    """
+    from src.storage.db import load_item, save_item, unmerged_commits
+    from src.sync import embed_chunks
+
+    since = (datetime.now(timezone.utc) - timedelta(days=MERGE_CHECK_DAYS)).isoformat()
+    candidates = unmerged_commits(conn, since, MERGE_CHECK_LIMIT)
+    if not candidates:
+        return 0
+
+    merged = merged_commits(candidates)
+    for item_id in merged:
+        record = as_merged(load_item(conn, item_id))
+        save_item(conn, record, embed_chunks(record.title, record.body))
+    if merged:
+        log(f"[sync] github: {len(merged)} branch commits have since merged")
+    return len(merged)
+
+
+SOURCE = Source(
+    name="github",
+    description="commits you authored, across your repos and their branches",
+    configured=lambda: bool(get_secret("GITHUB_TOKEN")),
+    fetch=fetch_recent_commits,
+    kinds=("commit",),
+    after=update_merged,
+)

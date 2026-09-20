@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
 
 from src.config.google_auth import get_calendar_credentials
+from src.config.paths import google_client_path, google_token_path
+from src.ingestion.base import Source
 from src.storage.db import event_fields
 from src.storage.types import ActivityRecord
 
@@ -77,3 +79,15 @@ def fetch_recent_events(since: datetime) -> list[ActivityRecord]:
     # a cancelled occurrence is gone as far as questions go; leaving it out lets the
     # sync mark it deleted along with anything removed outright
     return [_to_record(event) for event in events if event.get("status") != "cancelled"]
+
+
+SOURCE = Source(
+    name="calendar",
+    description="events from your primary Google calendar",
+    configured=lambda: google_token_path().exists() or google_client_path().exists(),
+    fetch=fetch_recent_events,
+    kinds=("event",),
+    # google returns every event in the window, so one that has stopped coming
+    # back has been cancelled
+    complete_window=True,
+)

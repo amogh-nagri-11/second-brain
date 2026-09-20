@@ -8,6 +8,8 @@ from unittest import mock
 import numpy as np
 
 from src import sync
+from src.ingestion import github
+from src.ingestion.base import Registry, Source
 from src.storage import db
 from src.storage.types import ActivityRecord
 
@@ -48,15 +50,14 @@ class SyncTests(unittest.TestCase):
         self.calendar_events = []
         self.github_commits = []
         self.merged = set()
-        sources = {
-            "calendar": sync.Source(configured=lambda: True, fetch=lambda since: list(self.calendar_events),
-                                    complete_window=True),
-            "github": sync.Source(configured=lambda: True, fetch=lambda since: list(self.github_commits),
-                                  after=sync._update_merged),
-        }
+        # two stand-in sources through the same interface a real one implements
+        self.calendar = Source(name="calendar", configured=lambda: True, kinds=("event",),
+                               fetch=lambda since: list(self.calendar_events), complete_window=True)
+        self.github = Source(name="github", configured=lambda: True, kinds=("commit",),
+                             fetch=lambda since: list(self.github_commits), after=github.update_merged)
         for patch in [
-            mock.patch.object(sync, "SOURCES", sources),
-            mock.patch.object(sync, "merged_commits", side_effect=lambda candidates: set(self.merged)),
+            mock.patch.object(sync, "sources", lambda: Registry([self.calendar, self.github])),
+            mock.patch.object(github, "merged_commits", side_effect=lambda candidates: set(self.merged)),
         ]:
             patch.start()
             self.addCleanup(patch.stop)
@@ -112,7 +113,7 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result["updated"], 1)
 
     def test_an_unconfigured_source_is_skipped_not_failed(self):
-        sync.SOURCES["github"].configured = lambda: False
+        self.github.configured = lambda: False
         result = self.run_sync()
         self.assertEqual(result["not_configured"], ["github"])
         self.assertEqual(result["failed"], [])

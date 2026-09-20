@@ -125,6 +125,29 @@ class TallyTests(unittest.TestCase):
         self.assertEqual(result["total"], 5)
 
 
+class MergeCheckTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conn = db.get_connection(Path(self._tmp.name) / "brain.db")
+        self.addCleanup(self.conn.close)
+
+    def test_an_open_pull_request_is_not_taken_for_an_unmerged_commit(self):
+        # a pull request is a github item with merged = 0 and no sha, and the merge
+        # check compares by sha -- it used to pick these up and fail on every sync
+        record = pr(1, state="open")
+        db.save_item(self.conn, record, chunks(record))
+        commit = ActivityRecord(
+            id="github:commit:abc", source="github", kind="commit",
+            timestamp=NOW.isoformat(), title="repo [topic]: work", body="",
+            fields={"repo": "repo", "full_name": "me/repo", "branch": "topic", "merged": False, "sha": "abc"},
+        )
+        db.save_item(self.conn, commit, chunks(commit))
+
+        candidates = db.unmerged_commits(self.conn, "2000-01-01", 50)
+        self.assertEqual([row[0] for row in candidates], ["github:commit:abc"])
+
+
 class ToolTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

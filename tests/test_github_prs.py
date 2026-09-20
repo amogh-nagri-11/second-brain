@@ -98,18 +98,19 @@ class FetchTests(unittest.TestCase):
 
 class LookbackTests(unittest.TestCase):
     def test_first_pr_sync_reaches_further_back_than_commits(self):
-        from src import sync
+        from src.ingestion.registry import sources
 
+        registry = sources()
         self.assertGreater(
-            sync.SOURCES["github_prs"].first_lookback_days,
-            sync.SOURCES["github"].first_lookback_days,
+            registry.get("github_prs").first_lookback_days,
+            registry.get("github").first_lookback_days,
         )
 
     def test_later_syncs_use_the_cursor_not_the_lookback(self):
         from src import sync
 
         with mock.patch.object(sync, "get_last_synced_at", return_value="2026-09-18T00:00:00+00:00"):
-            since = sync._since_for(None, "github_prs", sync.PR_LOOKBACK_DAYS)
+            since = sync._since_for(None, "github_prs", github_prs.LOOKBACK_DAYS)
         self.assertEqual(since.year, 2026)
         self.assertEqual(since.month, 9)
 

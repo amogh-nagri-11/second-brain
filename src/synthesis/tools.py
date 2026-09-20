@@ -9,9 +9,12 @@ fixed set of filters (see TALLY_FIELDS).
 
 import json
 
+from src.ingestion.registry import sources
 from src.storage.db import tally
 
-KINDS = ["commit", "pr", "event"]
+# what the sources actually produce, so a new source is countable the moment it
+# declares its kinds -- nothing to remember here
+KINDS = sources().kinds()
 DATES = ["happened", "opened", "merged"]
 STATES = ["merged", "open", "closed"]
 GROUPS = ["kind", "state", "ownership", "repo", "month", "branch"]
@@ -36,7 +39,7 @@ TOOL_SCHEMA = [
                     "kind": {
                         "type": "string",
                         "enum": KINDS,
-                        "description": "commit, pr (pull request) or event (calendar)",
+                        "description": "the kind of item: " + ", ".join(KINDS),
                     },
                     "state": {
                         "type": "string",

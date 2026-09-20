@@ -11,7 +11,8 @@ from datetime import datetime
 
 from github import Auth, Github
 
-from src.config.env import github_token
+from src.config.env import get_secret, github_token
+from src.ingestion.base import Source
 from src.storage.types import ActivityRecord
 
 # search tops out at 1000 results anyway, and a personal history reaches nowhere
@@ -109,3 +110,19 @@ def fetch_recent_prs(since: datetime) -> list[ActivityRecord]:
     for issue in results[:MAX_RESULTS]:
         records.append(pr_record(issue.raw_data, username))
     return records
+
+
+# the whole history costs one search either way, and "how many have I merged" is
+# wrong without it
+LOOKBACK_DAYS = 365 * 5
+
+# its own source, not part of "github", so one search failing can't stop commits
+# from being ingested, and each keeps its own cursor
+SOURCE = Source(
+    name="github_prs",
+    description="pull requests you opened, in any repository",
+    configured=lambda: bool(get_secret("GITHUB_TOKEN")),
+    fetch=fetch_recent_prs,
+    kinds=("pr",),
+    first_lookback_days=LOOKBACK_DAYS,
+)

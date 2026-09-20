@@ -1,8 +1,6 @@
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
-
-ActivitySource = Literal['github', 'calendar']
 
 
 class ActivityRecord(BaseModel):
@@ -14,7 +12,9 @@ class ActivityRecord(BaseModel):
     """
 
     id: str
-    source: ActivitySource
+    # the name of the source that produced it, as its Source declares it. A plain
+    # string rather than a fixed set, so a new source needs no change here
+    source: str
     # what it is, independent of where it came from: "commit", "event", ...
     kind: str
     timestamp: str

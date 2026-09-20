@@ -220,7 +220,7 @@ Questions and answers are kept in the database, so history survives a restart.
 
 ```
 src/
-├── ingestion/    github · github_prs · calendar   what happened
+├── ingestion/    base · registry · github · github_prs · calendar   what happened
 ├── embeddings/   provider · chunking          MiniLM through ONNX Runtime; splitting long text
 ├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
 ├── entities/     linking.py                   items → clusters, compared only within 48h
@@ -235,6 +235,31 @@ src/
 ├── sync.py       incremental, per-source cursors
 └── pipeline.py   question → answer
 ```
+
+## Adding a source
+
+A source is a module in `src/ingestion/` ending in a `SOURCE = Source(...)`, plus
+its line in `src/ingestion/registry.py`. Nothing else changes — sync, deletion
+handling and the counting tool all read the registry.
+
+```python
+SOURCE = Source(
+    name="notes",                       # the sync cursor is kept under this
+    description="a folder of notes",
+    configured=lambda: notes_dir().exists(),   # not set up? skipped, not failed
+    fetch=fetch_recent_notes,           # everything since a moment
+    kinds=("note",),                    # what it produces, so counting can filter on it
+    complete_window=True,               # returns its whole window? then deletions are inferred
+    first_lookback_days=365,            # how far the first sync reaches (default 90)
+    after=None,                         # anything else that keeps stored items current
+)
+```
+
+Two promises are worth thinking about. `complete_window` says a fetch returns
+*everything* in its window, so anything stored in that window that didn't come
+back has been deleted — true of Google Calendar, false of GitHub, which skips
+repos with no recent pushes. `kinds` is what makes a source countable: the
+counting tool offers exactly the kinds the registry declares.
 
 ## Design notes
 

@@ -5,20 +5,15 @@ instead of re-fetching and re-embedding the whole history. Clusters are rebuilt
 here (once per sync) rather than on every question.
 """
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable
 
 from dateutil import parser as date_parser
 
-from src.config.env import get_secret
-from src.config.paths import google_client_path, google_token_path
 from src.embeddings.chunking import CHUNKING_VERSION, chunk_texts
 from src.embeddings.provider import MODEL_ID, get_embedder
 from src.entities.linking import link_entities
-from src.ingestion.calendar import fetch_recent_events
-from src.ingestion.github import as_merged, fetch_recent_commits, merged_commits
-from src.ingestion.github_prs import fetch_recent_prs
+from src.ingestion.base import INITIAL_LOOKBACK_DAYS
+from src.ingestion.registry import sources
 from src.storage.db import (
     existing_fingerprints,
     get_connection,
@@ -28,21 +23,14 @@ from src.storage.db import (
     item_texts,
     live_ids_between,
     load_all_records,
-    load_item,
     mark_deleted,
     record_fingerprint,
     replace_chunks,
     save_clusters,
     save_item,
     set_last_synced_at,
-    unmerged_commits,
 )
 
-# how far back to look the very first time a source is synced
-INITIAL_LOOKBACK_DAYS = 90
-# pull requests are worth reaching much further back for: the whole history costs
-# one search either way, and "how many have I merged" is wrong without it
-PR_LOOKBACK_DAYS = 365 * 5
 # re-scan a window before the last sync rather than starting exactly where we left off.
 # GitHub filters commits by commit date, not push date, so work committed locally and
 # pushed days later lands *behind* the cursor and would otherwise be missed forever.
@@ -54,9 +42,6 @@ OVERLAP_HOURS = 24 * 7
 # (all-day entries are dates in your own time zone), and a miss there would wrongly
 # delete. The week of overlap means nothing is left unchecked.
 RECONCILE_MARGIN = timedelta(days=1)
-# how far back, and how many, unmerged commits are re-checked each sync
-MERGE_CHECK_DAYS = 180
-MERGE_CHECK_LIMIT = 50
 
 
 def _since_for(conn, source: str, first_lookback_days: int = INITIAL_LOOKBACK_DAYS) -> datetime:
@@ -64,60 +49,6 @@ def _since_for(conn, source: str, first_lookback_days: int = INITIAL_LOOKBACK_DA
     if last is None:
         return datetime.now(timezone.utc) - timedelta(days=first_lookback_days)
     return date_parser.parse(last) - timedelta(hours=OVERLAP_HOURS)
-
-
-@dataclass
-class Source:
-    """What sync needs from a source."""
-
-    # set up at all? a source that isn't is skipped, not failed
-    configured: Callable[[], bool]
-    # everything since a moment, as ActivityRecords
-    fetch: Callable[[datetime], list]
-    # does a fetch return *everything* in its window? Then anything stored in the
-    # window that didn't come back has been deleted. Not true of GitHub, which
-    # skips repos with no recent pushes.
-    complete_window: bool = False
-    # anything else to keep stored items current, run after a successful fetch;
-    # returns how many items it changed
-    after: Callable | None = None
-    # how far back the very first sync of this source reaches
-    first_lookback_days: int = INITIAL_LOOKBACK_DAYS
-
-
-def _update_merged(conn, log) -> int:
-    since = (datetime.now(timezone.utc) - timedelta(days=MERGE_CHECK_DAYS)).isoformat()
-    candidates = unmerged_commits(conn, since, MERGE_CHECK_LIMIT)
-    if not candidates:
-        return 0
-    merged = merged_commits(candidates)
-    for item_id in merged:
-        record = as_merged(load_item(conn, item_id))
-        save_item(conn, record, embed_chunks(record.title, record.body))
-    if merged:
-        log(f"[sync] github: {len(merged)} branch commits have since merged")
-    return len(merged)
-
-
-SOURCES = {
-    "github": Source(
-        configured=lambda: bool(get_secret("GITHUB_TOKEN")),
-        fetch=fetch_recent_commits,
-        after=_update_merged,
-    ),
-    # its own source, not part of "github", so one search failing can't stop
-    # commits from being ingested and each keeps its own cursor
-    "github_prs": Source(
-        configured=lambda: bool(get_secret("GITHUB_TOKEN")),
-        fetch=fetch_recent_prs,
-        first_lookback_days=PR_LOOKBACK_DAYS,
-    ),
-    "calendar": Source(
-        configured=lambda: google_token_path().exists() or google_client_path().exists(),
-        fetch=fetch_recent_events,
-        complete_window=True,
-    ),
-}
 
 
 def _reconcile(conn, source: str, since: datetime, until: datetime, fetched: set[str]) -> int:
@@ -176,7 +107,8 @@ def run_sync(conn=None, log=print) -> dict:
         failed: list[str] = []
         not_configured: list[str] = []
 
-        for name, source in SOURCES.items():
+        for source in sources():
+            name = source.name
             # a source you haven't set up isn't a failure -- skip it quietly and
             # sync the rest
             if not source.configured():

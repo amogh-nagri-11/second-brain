@@ -329,12 +329,19 @@ def live_ids_between(conn: sqlite3.Connection, source: str, start: str, end: str
 
 
 def unmerged_commits(conn: sqlite3.Connection, since: str, limit: int) -> list[tuple[str, str, str]]:
-    """(id, owner/repo, sha) for recent commits only seen on a topic branch so far."""
+    """(id, owner/repo, sha) for recent commits only seen on a topic branch so far.
+
+    Commits specifically: an open pull request is also a github item with
+    merged = 0, and it has no sha to compare against.
+    """
     return conn.execute(
         """SELECT id, json_extract(fields, '$.full_name'), json_extract(fields, '$.sha')
            FROM items
-           WHERE source = 'github' AND deleted_at IS NULL AND json_extract(fields, '$.merged') = 0
-             AND json_extract(fields, '$.full_name') IS NOT NULL AND occurred_at >= ?
+           WHERE source = 'github' AND kind = 'commit' AND deleted_at IS NULL
+             AND json_extract(fields, '$.merged') = 0
+             AND json_extract(fields, '$.full_name') IS NOT NULL
+             AND json_extract(fields, '$.sha') IS NOT NULL
+             AND occurred_at >= ?
            ORDER BY occurred_at DESC LIMIT ?""",
         (since, limit),
     ).fetchall()

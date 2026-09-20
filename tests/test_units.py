@@ -91,17 +91,36 @@ class ProviderTests(unittest.TestCase):
     def test_the_model_is_not_hard_coded_in_the_callers(self):
         # it used to be a default argument in two unrelated files, which is how a
         # model change turned into a code change
-        with mock.patch.object(llm, "setting", side_effect=lambda name, default: "some/model"):
+        with mock.patch.object(llm, "setting", side_effect=lambda name, default:
+                               "some/model" if name == "llm_model" else default):
             reply = mock.Mock(choices=[mock.Mock(message=mock.Mock(
                 content="SPOKEN: a\nWRITTEN: b", tool_calls=None))])
             with mock.patch.object(llm.client().chat.completions, "create", return_value=reply) as create:
                 answer.synthesize_answer("q", [record("r")])
             self.assertEqual(create.call_args.kwargs["model"], "some/model")
 
+    def test_the_key_follows_the_provider(self):
+        # switching provider should be one setting, not a setting plus a rename of
+        # the credential the code asks for
+        self.assertEqual(llm.key_name("https://openrouter.ai/api/v1"), "OPENROUTER_API_KEY")
+        self.assertEqual(llm.key_name("https://api.groq.com/openai/v1"), "GROQ_API_KEY")
+
+    def test_an_unknown_provider_uses_the_general_key(self):
+        self.assertEqual(llm.key_name("https://llm.example.com/v1"), "LLM_API_KEY")
+
+    def test_the_client_asks_for_the_key_that_provider_needs(self):
+        asked = []
+        with mock.patch.object(llm, "setting", side_effect=lambda name, default:
+                               "https://api.groq.com/openai/v1" if name == "llm_base_url" else default), \
+             mock.patch.object(llm, "llm_api_key", side_effect=lambda name: asked.append(name) or "k"):
+            llm.client()
+        self.assertEqual(asked, ["GROQ_API_KEY"])
+
     def test_a_missing_key_is_raised_when_asked_for_not_at_import(self):
         from src.config.env import MissingCredential
 
-        with mock.patch.object(llm, "llm_api_key", side_effect=MissingCredential("OPENROUTER_API_KEY isn't set")):
+        with mock.patch.object(llm, "llm_api_key",
+                               side_effect=MissingCredential("OPENROUTER_API_KEY isn't set")):
             with self.assertRaises(MissingCredential):
                 llm.client()
 if __name__ == "__main__":

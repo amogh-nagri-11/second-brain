@@ -29,7 +29,9 @@ KEYRING_SERVICE = "SecondBrain"
 
 KNOWN = {
     "GITHUB_TOKEN": "GitHub personal access token, repo scope",
+    # whichever the llm_base_url setting points at; the others are ignored
     "OPENROUTER_API_KEY": "OpenRouter API key, from openrouter.ai/keys",
+    "GROQ_API_KEY": "Groq API key, from console.groq.com -- only if pointed at Groq",
 }
 
 
@@ -87,9 +89,10 @@ def github_token() -> str:
     return require("GITHUB_TOKEN")
 
 
-def llm_api_key() -> str:
-    """Whoever answers questions. OpenRouter by default -- see src.synthesis.llm."""
-    return require("OPENROUTER_API_KEY")
+def llm_api_key(name: str = "OPENROUTER_API_KEY") -> str:
+    """Whoever answers questions. Which key that is follows from the provider the
+    llm_base_url setting names -- see src.synthesis.llm.key_name."""
+    return require(name)
 
 
 def _main(argv: list[str]) -> int:

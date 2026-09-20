@@ -62,7 +62,7 @@ class AnswerTests(unittest.TestCase):
 
     def test_prompt_carries_today_and_branch_convention(self):
         reply = mock.Mock()
-        reply.choices = [mock.Mock(message=mock.Mock(content="SPOKEN: a\nWRITTEN: b"))]
+        reply.choices = [mock.Mock(message=mock.Mock(content="SPOKEN: a\nWRITTEN: b", tool_calls=None))]
         with mock.patch.object(answer.client().chat.completions, "create", return_value=reply) as create:
             answer.synthesize_answer("q", [record("r")], now=datetime(2026, 9, 19, 9, 0, tzinfo=timezone.utc))
         prompt = create.call_args.kwargs["messages"][0]["content"]

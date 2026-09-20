@@ -102,13 +102,15 @@ def get_answer(query_text: str) -> Answer:
         if not clusters:
             return Answer(spoken="I haven't ingested anything yet", written="")
         context, _ranked = retrieve(conn, query_text, clusters)
+
+        if not context:
+            return Answer(spoken="I don't have anything relating to that yet", written="")
+
+        try:
+            # the connection stays open through synthesis: counting questions are
+            # answered from the store itself, not from the records above
+            return synthesize_answer(query_text, context, conn=conn)
+        except MissingCredential as error:
+            return Answer(spoken="I need a Groq API key before I can answer", written=str(error))
     finally:
         conn.close()
-
-    if not context:
-        return Answer(spoken="I don't have anything relating to that yet", written="")
-
-    try:
-        return synthesize_answer(query_text, context)
-    except MissingCredential as error:
-        return Answer(spoken="I need a Groq API key before I can answer", written=str(error))

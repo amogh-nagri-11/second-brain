@@ -493,3 +493,81 @@ def recent_history(conn: sqlite3.Connection, limit: int) -> list[dict]:
         {"asked_at": r[0], "question": r[1], "spoken": r[2], "written": r[3], "via": r[4]}
         for r in rows
     ]
+
+
+# what a tallied question may filter and group on. A whitelist, not free-form SQL:
+# the model chooses the values, so the columns it can reach are fixed here.
+TALLY_FIELDS = {
+    "kind": "kind",
+    "source": "source",
+    "state": "json_extract(fields, '$.state')",
+    "ownership": "json_extract(fields, '$.ownership')",
+    "repo": "LOWER(json_extract(fields, '$.repo'))",
+    "branch": "json_extract(fields, '$.branch')",
+    "month": "SUBSTR(occurred_at, 1, 7)",
+}
+
+
+def tally(
+    conn: sqlite3.Connection,
+    filters: dict | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    group_by: str | None = None,
+    limit: int = 40,
+) -> dict:
+    """Count stored items exactly, with the matches themselves.
+
+    The model can only count what its context window holds, so it answers "how
+    many" from a sample and states it as a total. This asks the database instead:
+    the count is the whole store, and the titles come back with it so a written
+    answer can still list them.
+    """
+    where = ["deleted_at IS NULL"]
+    params: list = []
+
+    for name, value in (filters or {}).items():
+        if name not in TALLY_FIELDS or value is None:
+            continue
+        column = TALLY_FIELDS[name]
+        # repo names are compared lowercased on both sides; the rest are stored
+        # exactly as the source spells them
+        where.append(f"{column} = ?")
+        params.append(value.lower() if name == "repo" else value)
+
+    if since:
+        where.append("occurred_at >= ?")
+        params.append(since)
+    if until:
+        where.append("occurred_at <= ?")
+        # times are compared as text, so a bare date would cut the day it names off
+        # at midnight and lose everything that happened during it -- "until today"
+        # has to mean the end of today
+        params.append(f"{until}T23:59:59.999999" if len(until) == 10 else until)
+
+    clause = " AND ".join(where)
+    total = conn.execute(f"SELECT COUNT(*) FROM items WHERE {clause}", params).fetchone()[0]
+
+    groups = {}
+    if group_by in TALLY_FIELDS:
+        rows = conn.execute(
+            f"SELECT {TALLY_FIELDS[group_by]}, COUNT(*) FROM items WHERE {clause}"
+            f" GROUP BY 1 ORDER BY 2 DESC",
+            params,
+        ).fetchall()
+        groups = {(row[0] if row[0] is not None else "none"): row[1] for row in rows}
+
+    matches = conn.execute(
+        f"SELECT title, occurred_at, url FROM items WHERE {clause} ORDER BY occurred_at DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+
+    return {
+        "total": total,
+        "groups": groups,
+        "items": [{"title": row[0], "date": row[1][:10], "url": row[2]} for row in matches],
+        # says outright when the list is a sample, so an answer can't present it
+        # as the whole set -- the count above is still exact
+        "listed": len(matches),
+        "truncated": total > len(matches),
+    }

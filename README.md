@@ -222,7 +222,7 @@ src/
 ├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
 ├── entities/     linking.py                   items → clusters, compared only within 48h
 ├── retrieval/    search.py                    semantic + keyword + recency
-├── synthesis/    answer.py                    one call, two answers
+├── synthesis/    answer.py · tools.py         two answers; exact counts from the store
 ├── core/         service · api · serve · client · autostart   the background service
 ├── capture/      recorder · transcriber · menubar_app
 ├── output/       speaker.py · speech.py       macOS say, spoken-form rewriting
@@ -241,6 +241,14 @@ src/
 - **Speech gets its own pass.** Read aloud, `2026-08-22` becomes a
   twenty-million-something number and emoji are announced by name, so the spoken
   copy is rewritten first — markdown stripped, dates spelled out.
+- **Counting asks the database, not the model.** Retrieval hands the model the
+  best-matching records, never the whole store, so counting those gave a total
+  that looked complete and wasn't. A question that turns on a number now runs a
+  real query first (`count_activity`), and the answer states that count.
+- **Deciding what to count is a call of its own**, carrying the question but not
+  the records. Letting the model call the tool mid-conversation would resend
+  every record, and two of those exceed the free tier's 8k tokens a minute on
+  their own.
 - **Pull requests are searched, not crawled.** One query returns every pull
   request you have opened in any repo, with its state, labels and merge time
   already attached — so unlike commits, they cost no per-repo walk, and the first
@@ -276,8 +284,8 @@ src/
 
 ## Known limitations
 
-- Retrieval caps at 60 records, so a question spanning more occurrences than that
-  returns a complete-looking but partial list.
+- The written answer lists at most 40 matching records, so a question with more
+  matches than that names a sample — the count itself stays exact.
 - The service answers only its own page and clients holding the per-launch token
   in `service.json`, which only your user account can read. Anything running as
   you can read that file too.

@@ -2,7 +2,7 @@
 
 # Second Brain
 
-**A local question-answering layer over your own activity — commits and calendar events — with voice input and spoken answers.**
+**A local question-answering layer over your own activity — commits, pull requests and calendar events — with voice input and spoken answers.**
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
@@ -17,9 +17,9 @@
 
 ## What it does
 
-Second Brain ingests your GitHub commits (across repos and branches) and your
-Google Calendar events, embeds them locally, and answers natural-language
-questions about them. Press a shortcut and ask, or type into a local window.
+Second Brain ingests your GitHub commits (across repos and branches), the pull
+requests you've opened anywhere, and your Google Calendar events, embeds them
+locally, and answers natural-language questions about them. Press a shortcut and ask, or type into a local window.
 It runs as a small background service on macOS, Windows and Linux. Each answer comes back in two forms: a short one spoken aloud, and a written one
 copied to the clipboard.
 
@@ -30,6 +30,7 @@ copied to the clipboard.
 | Retrieval | *"What was my latest commit on `<repo>`?"* resolves to the right commit, from the right branch |
 | Dual output | A concise spoken answer plus a written one with dates and bullets |
 | Branch awareness | Work on a topic branch is shown as `<repo> [fix/logstore…]`, so unmerged work is distinguishable |
+| Pull requests | Every PR you opened, with its state, and your own repos kept apart from other people's projects |
 | Local by default | The database, the embeddings and the speech-to-text all run on the machine |
 
 ## How it works
@@ -92,7 +93,7 @@ source that uses it:
 
 ```bash
 uv run python -m src.config.env set GROQ_API_KEY    # console.groq.com, needed to answer
-uv run python -m src.config.env set GITHUB_TOKEN    # repo scope, only if you want commits
+uv run python -m src.config.env set GITHUB_TOKEN    # repo scope, only if you want commits and PRs
 uv run python -m src.config.env status              # what is set, and where it came from
 ```
 
@@ -216,7 +217,7 @@ Questions and answers are kept in the database, so history survives a restart.
 
 ```
 src/
-├── ingestion/    github.py · calendar.py      what happened
+├── ingestion/    github · github_prs · calendar   what happened
 ├── embeddings/   provider · chunking          MiniLM through ONNX Runtime; splitting long text
 ├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
 ├── entities/     linking.py                   items → clusters, compared only within 48h
@@ -240,6 +241,18 @@ src/
 - **Speech gets its own pass.** Read aloud, `2026-08-22` becomes a
   twenty-million-something number and emoji are announced by name, so the spoken
   copy is rewritten first — markdown stripped, dates spelled out.
+- **Pull requests are searched, not crawled.** One query returns every pull
+  request you have opened in any repo, with its state, labels and merge time
+  already attached — so unlike commits, they cost no per-repo walk, and the first
+  sync reaches years back rather than 90 days.
+- **A merged pull request is dated when it landed**, not when it was opened, so
+  "latest" and "this week" match what you actually did. GitHub's own state only
+  says open or closed, so the merge time is what separates a merged pull request
+  from an abandoned one.
+- **Your repos and other people's are marked apart.** A pull request on someone
+  else's project reads as `huggingface/peft #3759 (open, external)`, so
+  "what have I contributed to" and "what did I do on my own projects" are
+  different questions.
 - **Sync overlaps by a week.** GitHub filters commits by *commit* date rather
   than push date, so work committed locally and pushed days later would
   otherwise land behind the cursor and never be ingested.

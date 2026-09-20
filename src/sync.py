@@ -18,6 +18,7 @@ from src.embeddings.provider import MODEL_ID, get_embedder
 from src.entities.linking import link_entities
 from src.ingestion.calendar import fetch_recent_events
 from src.ingestion.github import as_merged, fetch_recent_commits, merged_commits
+from src.ingestion.github_prs import fetch_recent_prs
 from src.storage.db import (
     existing_fingerprints,
     get_connection,
@@ -39,6 +40,9 @@ from src.storage.db import (
 
 # how far back to look the very first time a source is synced
 INITIAL_LOOKBACK_DAYS = 90
+# pull requests are worth reaching much further back for: the whole history costs
+# one search either way, and "how many have I merged" is wrong without it
+PR_LOOKBACK_DAYS = 365 * 5
 # re-scan a window before the last sync rather than starting exactly where we left off.
 # GitHub filters commits by commit date, not push date, so work committed locally and
 # pushed days later lands *behind* the cursor and would otherwise be missed forever.
@@ -55,10 +59,10 @@ MERGE_CHECK_DAYS = 180
 MERGE_CHECK_LIMIT = 50
 
 
-def _since_for(conn, source: str) -> datetime:
+def _since_for(conn, source: str, first_lookback_days: int = INITIAL_LOOKBACK_DAYS) -> datetime:
     last = get_last_synced_at(conn, source)
     if last is None:
-        return datetime.now(timezone.utc) - timedelta(days=INITIAL_LOOKBACK_DAYS)
+        return datetime.now(timezone.utc) - timedelta(days=first_lookback_days)
     return date_parser.parse(last) - timedelta(hours=OVERLAP_HOURS)
 
 
@@ -77,6 +81,8 @@ class Source:
     # anything else to keep stored items current, run after a successful fetch;
     # returns how many items it changed
     after: Callable | None = None
+    # how far back the very first sync of this source reaches
+    first_lookback_days: int = INITIAL_LOOKBACK_DAYS
 
 
 def _update_merged(conn, log) -> int:
@@ -98,6 +104,13 @@ SOURCES = {
         configured=lambda: bool(get_secret("GITHUB_TOKEN")),
         fetch=fetch_recent_commits,
         after=_update_merged,
+    ),
+    # its own source, not part of "github", so one search failing can't stop
+    # commits from being ingested and each keeps its own cursor
+    "github_prs": Source(
+        configured=lambda: bool(get_secret("GITHUB_TOKEN")),
+        fetch=fetch_recent_prs,
+        first_lookback_days=PR_LOOKBACK_DAYS,
     ),
     "calendar": Source(
         configured=lambda: google_token_path().exists() or google_client_path().exists(),
@@ -172,7 +185,7 @@ def run_sync(conn=None, log=print) -> dict:
                 continue
 
             started_at = datetime.now(timezone.utc)
-            since = _since_for(conn, name)
+            since = _since_for(conn, name, source.first_lookback_days)
 
             try:
                 records = source.fetch(since)

@@ -148,6 +148,7 @@
 
   .tools { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
   .tools button { padding: 7px 13px; font-size: 13px; }
+  #new-topic { padding: 4px 10px; font-size: 12px; }
 
   .thinking { display: flex; align-items: center; gap: 11px; color: var(--muted); }
   .dots { display: inline-flex; gap: 4px; }
@@ -195,6 +196,7 @@
     <div class="pills">
       <span class="pill" id="p-speak">idle</span>
       <span class="pill" id="p-sync">sync —</span>
+      <button id="new-topic" title="Forget the last few questions, so the next one stands alone" hidden>New topic</button>
     </div>
   </header>
 
@@ -208,6 +210,7 @@
     </div>
     <div class="hint">
       <span><kbd>⌘</kbd>/<kbd>Ctrl</kbd> <kbd>↵</kbd> to ask</span>
+      <span id="follow-hint"></span>
       <span>● or your shortcut to speak instead</span>
       <span id="rec-hint"></span>
     </div>
@@ -334,6 +337,7 @@ $('q').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); ask(); }
 });
 $('mic').onclick = () => post('/api/record', { recording: !recording });
+$('new-topic').onclick = () => post('/api/new-topic');
 
 function renderSync() {
   $('p-sync').textContent = syncing ? 'syncing…' : 'sync ' + ago(lastSyncAt);
@@ -348,6 +352,11 @@ function apply(s) {
   syncing = s.syncing;
   lastSyncAt = s.last_sync_at;
   renderSync();
+
+  // while a conversation is going, a question can say "those" and be understood;
+  // the button is how you say you have moved on
+  $('new-topic').hidden = !s.in_conversation;
+  $('follow-hint').textContent = s.in_conversation ? 'follows on from your last question' : '';
 
   recording = s.recording;
   $('mic').className = 'mic' + (s.recording ? ' live' : '');

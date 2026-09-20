@@ -7,6 +7,7 @@ from src.embeddings.provider import get_embedder
 from src.storage.db import get_clusters_version, get_connection, keyword_scores, load_clusters
 from src.retrieval.search import query_words, score_records, search
 from src.synthesis.answer import Answer, synthesize_answer
+from src.synthesis.rewrite import standalone_question
 
 # how many of the ranked clusters feed the answer. Anything that spans separate
 # occasions -- "how many times", "list every" -- lands in several singleton clusters
@@ -95,13 +96,24 @@ def retrieve(
     return _context_records(results, ranked), [record for record, _score in ranked]
 
 
-def get_answer(query_text: str) -> Answer:
+def get_answer(query_text: str, turns=None) -> Answer:
+    """Answer a question, optionally as the next turn of a conversation.
+
+    `turns` are the turns before this one, empty for a question asked out of the
+    blue. Retrieval runs on the rewritten question rather than on the previous
+    turn's records: holding those in front of the model made it answer "how many"
+    by counting them again, which is the thing the count exists to stop.
+    """
     conn = get_connection()
     try:
         clusters = get_clusters(conn)
         if not clusters:
             return Answer(spoken="I haven't ingested anything yet", written="")
-        context, _ranked = retrieve(conn, query_text, clusters)
+
+        # retrieval searches for what the question means, which for a follow-up is
+        # not what it says
+        search_text = standalone_question(query_text, turns or [])
+        context, _ranked = retrieve(conn, search_text, clusters)
 
         if not context:
             return Answer(spoken="I don't have anything relating to that yet", written="")
@@ -109,7 +121,9 @@ def get_answer(query_text: str) -> Answer:
         try:
             # the connection stays open through synthesis: counting questions are
             # answered from the store itself, not from the records above
-            return synthesize_answer(query_text, context, conn=conn)
+            return synthesize_answer(
+                query_text, context, conn=conn, turns=turns or [], search_text=search_text
+            )
         except MissingCredential as error:
             return Answer(spoken="I need a Groq API key before I can answer", written=str(error))
     finally:

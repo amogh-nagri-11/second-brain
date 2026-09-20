@@ -1,12 +1,13 @@
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from dateutil import parser as date_parser
 
 from openai import OpenAI
 from src.config.env import groq_api_key
-from src.synthesis.tools import TOOL_SCHEMA, run_tool
+from src.synthesis.tools import TOOL_SCHEMA, describe, run_tool
 
 _client: OpenAI | None = None
 
@@ -80,6 +81,9 @@ class Answer:
 
     spoken: str
     written: str
+    # the records this answer was built from, so the next turn of the conversation
+    # can be about the same ones
+    context_ids: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         return self.spoken
@@ -141,9 +145,25 @@ def _counts(query: str, today: str, model: str, conn) -> list[str]:
 
     calls = response.choices[0].message.tool_calls or []
     return [
-        run_tool(conn, call.function.name, call.function.arguments)
+        describe(json.loads(run_tool(conn, call.function.name, call.function.arguments)))
         for call in calls[:MAX_COUNTS]
     ]
+
+
+CONVERSATION_RULE = """
+Earlier in this conversation:
+{turns}
+
+The question below may refer back to those turns. Answer the question that was actually asked, in full -- someone reading the answer alone should not have to know what came before it.
+"""
+
+
+def _turns_text(turns) -> str:
+    lines = []
+    for turn in turns:
+        lines.append(f"Asked: {turn.question}")
+        lines.append(f"Answered: {turn.spoken}")
+    return "\n".join(lines)
 
 
 def synthesize_answer(
@@ -152,6 +172,8 @@ def synthesize_answer(
     model: str = 'openai/gpt-oss-120b',
     now: datetime | None = None,
     conn=None,
+    turns=None,
+    search_text: str | None = None,
 ) -> Answer:
     context = format_cluster_from_prompt(cluster)
     # without this "yesterday" and "this week" have nothing to be measured from, and
@@ -164,15 +186,18 @@ def synthesize_answer(
     # a question that turns on a number is counted in the store first; without a
     # store to count in (the tests, and the retrieval check) the records are all
     # there is, and the answer says what it can from them
-    counts = _counts(query, today, model, conn) if conn is not None else []
+    # counted against what the question means, which for a follow-up is the
+    # rewritten form, not the words that were said
+    counts = _counts(search_text or query, today, model, conn) if conn is not None else []
     counts_rule = COUNTS_RULE.format(counts="\n".join(counts)) if counts else ""
+    conversation = CONVERSATION_RULE.format(turns=_turns_text(turns)) if turns else ""
 
     prompt = f"""You are answering a question about the user's own recent activity, based only on the records below.
 
 Answer twice, in two forms, using these exact markers and nothing else:
 
 SPOKEN:
-This is read aloud, so length is expensive. Two or three sentences, under about 60 words, conversational. Plain text only -- no markdown, no bullets, no headings. If the question asks how many or how often, say the counted number and leave the dates to the written version. Every record is a separate occurrence: two that look almost identical are two, not one, and none may be skipped or merged.
+This is read aloud, so length is expensive. Two or three sentences, under about 60 words, conversational. Plain text only -- no markdown, no bullets, no headings. If the question asks how many or how often, say the counted number exactly as given and leave the dates to the written version. Every record is a separate occurrence: two that look almost identical are two, not one, and none may be skipped or merged.
 
 WRITTEN:
 The same answer formatted to be pasted into a document or an email. Open with one short line saying what it covers, then bullet points. Markdown is fine. Include the detail the spoken version had to leave out, and list every matching record rather than a sample, but stay factual and stick to the records -- no greeting, no sign-off, no invented context.
@@ -180,6 +205,7 @@ The same answer formatted to be pasted into a document or an email. Open with on
 Write dates the way a person would in a document: "21 Aug 2026", or "21 Aug 2026, 3:40 pm" when the time matters. Never paste a raw timestamp like 2026-08-21T10:09:02+00:00.
 
 It is now {today}. Resolve relative dates in the question ("yesterday", "last week") against that.
+{conversation}
 
 Commit titles read "<repo>: <subject>" when the commit is on the repo's default branch, and "<repo> [<branch>]: <subject>" when it is only on another branch -- that is, work that has not been merged yet. Use this when asked what has or hasn't landed.
 
@@ -192,10 +218,12 @@ Records:
 
 Question: {query}"""
 
-    return _split(_answer(prompt, model))
+    answer = _split(_answer(prompt, model))
+    answer.context_ids = [record["id"] for record in cluster if record.get("id")]
+    return answer
 
 
-COUNTS_RULE = """ Every number in the answer comes from the counts above instead, and only from one whose "counted" filters match what that number is about -- the count of the merged ones is not the count of all of them. "listed" items are the ones worth naming; when "truncated" is true they are only the most recent of them, so name them as a sample and keep the total exact.
+COUNTS_RULE = """ The counts below were run against the whole store and are the only place a number in the answer may come from. Never count, add up or adjust the records yourself, and never state a number that is not written below -- if the count says 30, the answer says 30. Use the count whose filters match what the number is about; the count of the merged ones is not the count of all of them. Items listed under a count are for naming them in the written answer, not for recounting; when a count says it lists only the most recent, say so and keep the total as given.
 
 Exact counts from the whole store:
 {counts}"""

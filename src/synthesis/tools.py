@@ -65,6 +65,32 @@ TOOL_SCHEMA = [
 FILTER_NAMES = ("kind", "state", "ownership", "repo", "branch")
 
 
+def describe(result: dict) -> str:
+    """A count, written out for the answering prompt.
+
+    JSON invited the model to treat the number as one more thing to check, and it
+    would answer 29 to a result of 30 -- it had recounted the items. Plain
+    sentences, with the number stated once and the items clearly subordinate to
+    it, are followed.
+    """
+    if "error" in result:
+        return f"A count could not be run: {result['error']}"
+
+    counted = result.get("counted") or {}
+    what = ", ".join(f"{name}={value}" for name, value in counted.items()) or "everything stored"
+    lines = [f"Counted {what}: {result['total']}. This number is final -- state it as it is, do not re-derive it."]
+
+    if result.get("groups"):
+        breakdown = ", ".join(f"{name}: {count}" for name, count in result["groups"].items())
+        lines.append(f"  broken down: {breakdown}")
+
+    if result.get("items"):
+        shown = "the most recent" if result.get("truncated") else "all"
+        lines.append(f"  {shown} {result['listed']} of them, newest first:")
+        lines.extend(f"    - {item['title']} ({item['date']})" for item in result["items"])
+    return "\n".join(lines)
+
+
 def run_tool(conn, name: str, arguments: str) -> str:
     """Execute a tool call and return what the model gets back, as JSON text."""
     if name != "count_activity":

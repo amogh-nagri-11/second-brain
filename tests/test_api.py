@@ -20,7 +20,7 @@ class FakeBrain:
     def state(self):
         return {"recording": self.recording, "history": []}
 
-    def ask(self, question, via):
+    def ask(self, question, via, new_topic=False):
         self.calls.append(("ask", question, via))
         return {"question": question, "spoken": "s", "written": "w"}
 

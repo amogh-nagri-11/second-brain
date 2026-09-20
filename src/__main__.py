@@ -1,7 +1,9 @@
 """python -m src <command>
 
     serve               run the service in the foreground
-    ask "question"      ask by text; prints the written answer
+    ask "question"      ask by text; prints the written answer. Follows on from
+                        your recent questions -- pass --new to start a topic
+    new                 forget the conversation so far
     record [on|off]     start or stop listening; toggles with no argument --
                         this is the command to bind to a keyboard shortcut
     stop                stop speaking
@@ -48,11 +50,13 @@ def main(argv: list[str]) -> int:
 
     ask = commands.add_parser("ask", help="ask by text")
     ask.add_argument("question", nargs="+")
+    ask.add_argument("--new", action="store_true", help="start a new topic, ignoring recent questions")
 
     record = commands.add_parser("record", help="start, stop or toggle listening")
     record.add_argument("state", nargs="?", choices=["on", "off"])
 
     commands.add_parser("stop", help="stop speaking")
+    commands.add_parser("new", help="start a new topic; the next question stands alone")
     commands.add_parser("sync", help="sync now")
     commands.add_parser("status", help="what the service is doing")
     commands.add_parser("open", help="open the window")
@@ -74,7 +78,9 @@ def main(argv: list[str]) -> int:
 
     try:
         if args.command == "ask":
-            entry = client.call("POST", "/api/ask", {"question": " ".join(args.question)})
+            entry = client.call(
+                "POST", "/api/ask", {"question": " ".join(args.question), "new_topic": args.new}
+            )
             print(entry["written"] or entry["spoken"])
 
         elif args.command == "record":
@@ -85,6 +91,10 @@ def main(argv: list[str]) -> int:
         elif args.command == "stop":
             client.call("POST", "/api/stop")
 
+        elif args.command == "new":
+            client.call("POST", "/api/new-topic")
+            print("new topic")
+
         elif args.command == "sync":
             client.call("POST", "/api/sync")
             print("syncing")
@@ -92,6 +102,8 @@ def main(argv: list[str]) -> int:
         elif args.command == "status":
             state = client.call("GET", "/api/state")
             doing = [name for name in ("recording", "thinking", "speaking", "syncing") if state[name]]
+            if state.get("in_conversation"):
+                doing.append("in a conversation")
             print(f"running at {client.base_url()}/")
             print(f"  {', '.join(doing) if doing else 'idle'}; last sync {_ago(state['last_sync_at'])}")
             if state["history"]:

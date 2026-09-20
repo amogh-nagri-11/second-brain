@@ -37,6 +37,9 @@ def allowed_hosts(port: int) -> set[str]:
 
 class AskBody(BaseModel):
     question: str
+    # true to forget the conversation first, so the question isn't read as a
+    # follow-up to whatever came before it
+    new_topic: bool = False
 
 
 class RecordBody(BaseModel):
@@ -95,7 +98,12 @@ def create_app(brain, token: str, port: int) -> FastAPI:
         question = body.question.strip()
         if not question:
             raise HTTPException(status_code=400, detail="empty question")
-        return brain.ask(question, via="typed")
+        return brain.ask(question, via="typed", new_topic=bool(body.new_topic))
+
+    @app.post("/api/new-topic", dependencies=auth)
+    def new_topic():
+        brain.new_topic()
+        return {"ok": True}
 
     @app.post("/api/record", dependencies=auth)
     def record(body: RecordBody):

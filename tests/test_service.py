@@ -63,7 +63,7 @@ class BrainTests(unittest.TestCase):
 
     def brain(self, audio=None, heard="what did I ship?"):
         brain = Brain(
-            ask=lambda q: Answer(spoken=f"spoken:{q}", written=f"written:{q}"),
+            ask=lambda q, **kwargs: Answer(spoken=f"spoken:{q}", written=f"written:{q}"),
             speaker=self.speaker,
             recorder=FakeRecorder(seconds(2) if audio is None else audio),
             transcriber=FakeTranscriber(heard),
@@ -109,7 +109,7 @@ class BrainTests(unittest.TestCase):
         self.assertFalse(brain.recording)
 
     def test_failed_answer_clears_thinking(self):
-        def broken(_q):
+        def broken(_q, **kwargs):
             raise RuntimeError("groq down")
         brain = self.brain()
         brain._ask = broken

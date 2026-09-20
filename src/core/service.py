@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Callable
 
+from src.core.conversation import Conversation
 from src.storage.db import add_history, get_connection, recent_history
 
 # the source moves a few times a day at most
@@ -61,6 +62,9 @@ class Brain:
         self._last_sync_result: dict | None = None
         self._sync_lock = threading.Lock()
 
+        # what has been asked recently, so a follow-up can lean on it
+        self.conversation = Conversation()
+
         self._subscribers: list[Callable[[dict], None]] = []
         self._subscribers_lock = threading.Lock()
 
@@ -107,25 +111,33 @@ class Brain:
                 "last_sync_at": self._last_sync_at,
                 "last_sync": self._last_sync_result,
             }
+        state["in_conversation"] = self.conversation.active
         state["speaking"] = self.speaker.is_speaking
         state["history"] = self.history()
         return state
 
     # --- asking ---------------------------------------------------------------
 
-    def ask(self, question: str, via: str = "typed") -> dict:
+    def ask(self, question: str, via: str = "typed", new_topic: bool = False) -> dict:
         """Answer a question and remember it.
 
         A spoken question is answered out loud and its written form goes on the
         clipboard. A typed one is neither: you typed because you couldn't talk,
         and the window already shows the text with a copy button.
+
+        Unless it starts a new topic, the question is answered as the next turn of
+        the conversation, so it can refer back to the last one.
         """
+        if new_topic:
+            self.conversation.reset()
+        turns = self.conversation.recent()
+
         with self._lock:
             self._thinking = True
         self._publish("thinking", question=question)
 
         try:
-            answer = self._ask(question)
+            answer = self._ask(question, turns=turns)
         except Exception:
             with self._lock:
                 self._thinking = False
@@ -135,6 +147,8 @@ class Brain:
             self._thinking = False
 
         asked_at = time.time()
+        self.conversation.add(question, answer.spoken, getattr(answer, "context_ids", []), asked_at)
+
         conn = get_connection()
         try:
             add_history(conn, asked_at, question, answer.spoken, answer.written, via)
@@ -147,6 +161,7 @@ class Brain:
             "spoken": answer.spoken,
             "written": answer.written,
             "via": via,
+            "follow_up": bool(turns),
         }
         print(f"[service] {via}: {question!r} -> {answer.spoken!r}")
 
@@ -156,6 +171,11 @@ class Brain:
 
         self._publish("answer", entry=entry)
         return entry
+
+    def new_topic(self):
+        """Forget the conversation so far; the next question starts clean."""
+        self.conversation.reset()
+        self._publish("conversation")
 
     def replay(self, index: int):
         """Speak an earlier answer again and put it back on the clipboard."""

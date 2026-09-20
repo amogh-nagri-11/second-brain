@@ -145,8 +145,8 @@ class PlanThenAnswerTests(unittest.TestCase):
         self.assertEqual(got.spoken, "three")
         prompt = create.call_args_list[1].kwargs["messages"][0]["content"]
         self.assertIn("Exact counts from the whole store", prompt)
-        self.assertIn('"total": 3', prompt)
-        self.assertIn('"merged": 2', prompt)
+        self.assertIn("Counted kind=pr, group_by=state: 3", prompt)
+        self.assertIn("merged: 2", prompt)
 
     def test_the_records_are_sent_once(self):
         # the whole point of counting in a call of its own: the deciding call must
@@ -183,7 +183,7 @@ class PlanThenAnswerTests(unittest.TestCase):
             answer.synthesize_answer("how many?", [], conn=self.conn)
 
         prompt = create.call_args_list[1].kwargs["messages"][0]["content"]
-        self.assertEqual(prompt.count('"total":'), answer.MAX_COUNTS)
+        self.assertEqual(prompt.count("This number is final"), answer.MAX_COUNTS)
 
 
 if __name__ == "__main__":

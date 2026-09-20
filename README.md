@@ -27,6 +27,7 @@ copied to the clipboard.
 |---|---|
 | Voice input | Press your shortcut anywhere and ask; recording stops when you go quiet, and the answer is spoken back |
 | Typed input | A local window for when speech isn't practical — text only, no speech output |
+| Follow-ups | *"how many of those merged?"* carries on from your last question, until you move on or ten minutes pass |
 | Retrieval | *"What was my latest commit on `<repo>`?"* resolves to the right commit, from the right branch |
 | Dual output | A concise spoken answer plus a written one with dates and bullets |
 | Branch awareness | Work on a topic branch is shown as `<repo> [fix/logstore…]`, so unmerged work is distinguishable |
@@ -183,6 +184,8 @@ AutoHotkey on Windows, the desktop's keyboard settings on Linux.
 
 ```bash
 python -m src ask "what did I ship this week?"   # prints the written answer
+python -m src ask --new "..."                    # ...ignoring recent questions
+python -m src new                                # forget the conversation so far
 python -m src record                             # start / stop listening
 python -m src status | sync | stop | open
 ```
@@ -222,8 +225,8 @@ src/
 ├── storage/      db.py · types.py             items, chunks, the keyword index; migrations
 ├── entities/     linking.py                   items → clusters, compared only within 48h
 ├── retrieval/    search.py                    semantic + keyword + recency
-├── synthesis/    answer.py · tools.py         two answers; exact counts from the store
-├── core/         service · api · serve · client · autostart   the background service
+├── synthesis/    answer · tools · rewrite     two answers; exact counts; follow-ups
+├── core/         service · api · serve · client · conversation · autostart   the background service
 ├── capture/      recorder · transcriber · menubar_app
 ├── output/       speaker.py · speech.py       macOS say, spoken-form rewriting
 ├── ui/           index.html                   the local window
@@ -241,6 +244,19 @@ src/
 - **Speech gets its own pass.** Read aloud, `2026-08-22` becomes a
   twenty-million-something number and emoji are announced by name, so the spoken
   copy is rewritten first — markdown stripped, dates spelled out.
+- **A follow-up is rewritten before it is searched.** "How many of those
+  merged?" embeds to nothing and matches no keywords, so retrieval would answer
+  it from whatever that sentence happened to rank. It is turned into a question
+  that stands alone first ("how many of the pull requests I opened on other
+  people's projects have merged?"), and that is what gets searched and counted —
+  the model still sees the question you actually asked.
+- **The previous turn's records are deliberately not kept in front of the model.**
+  Holding them there made it answer "how many" by counting them again, which is
+  exactly what the count exists to stop. The rewritten question finds them again
+  anyway.
+- **Counts are written out, not handed over as JSON.** Given `{"total": 30}` the
+  model would answer 29: it treated the number as something to check against the
+  items. A sentence saying the count is final is followed.
 - **Counting asks the database, not the model.** Retrieval hands the model the
   best-matching records, never the whole store, so counting those gave a total
   that looked complete and wasn't. A question that turns on a number now runs a

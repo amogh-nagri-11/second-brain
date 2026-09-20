@@ -8,7 +8,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-menubar-000000?logo=apple&logoColor=white">
   <img alt="Local" src="https://img.shields.io/badge/data-stays%20local-2ea44f">
-  <img alt="LLM" src="https://img.shields.io/badge/llm-groq%20%C2%B7%20gpt--oss--120b-9d7bff">
+  <img alt="LLM" src="https://img.shields.io/badge/llm-openrouter%20%C2%B7%20any%20model-9d7bff">
 </p>
 
 </div>
@@ -57,7 +57,7 @@ flowchart LR
     W --> S
     TYPE --> S
     CL --> S
-    S["search<br/>semantic + BM25 + recency"] --> LLM["Groq<br/>gpt-oss-120b"]
+    S["search<br/>semantic + BM25 + recency"] --> LLM["OpenRouter<br/>any model"]
     LLM --> SPK["spoken"]
     LLM --> WRI["written"]
 ```
@@ -94,13 +94,30 @@ Manager on Windows, Secret Service on Linux), and each one is only needed by the
 source that uses it:
 
 ```bash
-uv run python -m src.config.env set GROQ_API_KEY    # console.groq.com, needed to answer
+uv run python -m src.config.env set OPENROUTER_API_KEY   # openrouter.ai/keys, needed to answer
 uv run python -m src.config.env set GITHUB_TOKEN    # repo scope, only if you want commits and PRs
 uv run python -m src.config.env status              # what is set, and where it came from
 ```
 
 A `.env` file (in the app folder or the repo root) still works as a fallback, and
 `python -m src.config.env import-env` copies one into the keychain.
+
+### Which model answers
+
+One key reaches every model, so changing model costs a setting rather than a
+release:
+
+```bash
+uv run python -m src.config.settings                     # what is set
+uv run python -m src.config.settings llm_model deepseek/deepseek-v4-flash
+uv run python -m src.config.settings llm_base_url https://api.groq.com/openai/v1
+```
+
+The default is `openai/gpt-oss-120b` through OpenRouter — the model the prompts
+were written against. It reasons out of the same budget it answers from, which is
+why `max_tokens` is where it is; a different model is worth re-checking against
+`python -m src.eval.retrieval` and a few real questions. Changes take effect when
+the service restarts.
 
 **3. Google Calendar** (optional) — download an OAuth **desktop app** client from
 the Google Cloud Console and save it as `credentials.json` in the app folder. In
@@ -310,6 +327,10 @@ counting tool offers exactly the kinds the registry declares.
 - **"Opened this month" and "merged this month" are different questions.** A pull
   request is stored at the moment it merged, so a date range can be measured
   against when it was opened instead.
+- **The provider is a setting, not a design constraint.** On a free tier the
+  limits shaped the app — how many records a question could carry, how long an
+  answer could be, why counting is a separate call. Those numbers now answer to
+  cost and latency, which are ours to trade, rather than to someone's daily quota.
 - **Notes are read, never written.** A bad answer is recoverable; a folder of
   notes damaged by a bug is not. Capturing new notes by voice would write new
   files in one folder of its own rather than touch what is already there.

@@ -11,7 +11,7 @@ import numpy as np
 
 from src.storage import db
 from src.storage.types import ActivityRecord
-from src.synthesis import answer, tools
+from src.synthesis import answer, llm, tools
 
 NOW = datetime.now(timezone.utc)
 
@@ -197,7 +197,7 @@ class PlanThenAnswerTests(unittest.TestCase):
     def test_the_count_is_run_and_reaches_the_answering_prompt(self):
         call = tool_call('{"kind": "pr", "group_by": "state"}')
         replies = [reply(tool_calls=[call]), reply(content="SPOKEN: three\nWRITTEN: three")]
-        with mock.patch.object(answer.client().chat.completions, "create", side_effect=replies) as create:
+        with mock.patch.object(llm.client().chat.completions, "create", side_effect=replies) as create:
             got = answer.synthesize_answer("how many?", [], conn=self.conn)
 
         self.assertEqual(got.spoken, "three")
@@ -211,7 +211,7 @@ class PlanThenAnswerTests(unittest.TestCase):
         # not carry the records, or one question spends the token budget twice
         call = tool_call()
         replies = [reply(tool_calls=[call]), reply(content="SPOKEN: a\nWRITTEN: b")]
-        with mock.patch.object(answer.client().chat.completions, "create", side_effect=replies) as create:
+        with mock.patch.object(llm.client().chat.completions, "create", side_effect=replies) as create:
             answer.synthesize_answer("how many?", [{
                 "source": "github", "title": "a distinctive title", "body": "", "timestamp": NOW.isoformat(),
             }], conn=self.conn)
@@ -222,14 +222,14 @@ class PlanThenAnswerTests(unittest.TestCase):
 
     def test_a_question_needing_no_count_adds_nothing(self):
         replies = [reply(content="NONE", tool_calls=None), reply(content="SPOKEN: a\nWRITTEN: b")]
-        with mock.patch.object(answer.client().chat.completions, "create", side_effect=replies) as create:
+        with mock.patch.object(llm.client().chat.completions, "create", side_effect=replies) as create:
             answer.synthesize_answer("what did I do yesterday?", [], conn=self.conn)
 
         self.assertNotIn("Exact counts", create.call_args_list[1].kwargs["messages"][0]["content"])
 
     def test_without_a_store_it_answers_from_the_records_alone(self):
         with mock.patch.object(
-            answer.client().chat.completions, "create", return_value=reply(content="SPOKEN: a\nWRITTEN: b")
+            llm.client().chat.completions, "create", return_value=reply(content="SPOKEN: a\nWRITTEN: b")
         ) as create:
             answer.synthesize_answer("how many?", [], conn=None)
         self.assertEqual(create.call_count, 1)
@@ -237,7 +237,7 @@ class PlanThenAnswerTests(unittest.TestCase):
     def test_only_a_few_counts_are_run(self):
         calls = [tool_call(call_id=f"c{n}") for n in range(6)]
         replies = [reply(tool_calls=calls), reply(content="SPOKEN: a\nWRITTEN: b")]
-        with mock.patch.object(answer.client().chat.completions, "create", side_effect=replies) as create:
+        with mock.patch.object(llm.client().chat.completions, "create", side_effect=replies) as create:
             answer.synthesize_answer("how many?", [], conn=self.conn)
 
         prompt = create.call_args_list[1].kwargs["messages"][0]["content"]

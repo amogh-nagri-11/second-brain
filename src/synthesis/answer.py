@@ -5,23 +5,11 @@ from datetime import datetime, timezone
 
 from dateutil import parser as date_parser
 
-from openai import OpenAI
-from src.config.env import groq_api_key
+from src.synthesis.llm import client, model as default_model
 from src.synthesis.tools import TOOL_SCHEMA, describe, run_tool
 
-_client: OpenAI | None = None
-
-
-def client() -> OpenAI:
-    """Built on first use, so a missing key surfaces as an answer, not an import
-    error that stops the app from starting."""
-    global _client
-    if _client is None:
-        _client = OpenAI(api_key=groq_api_key(), base_url="https://api.groq.com/openai/v1")
-    return _client
-
-# full commit messages are long enough that a few dozen records blow the free-tier
-# token budget; the subject line carries most of the signal anyway
+# full commit messages are long enough that a few dozen of them cost more than
+# they are worth; the subject line carries most of the signal anyway
 MAX_BODY_CHARS = 400
 
 
@@ -128,10 +116,10 @@ def _counts(query: str, today: str, model: str, conn) -> list[str]:
     """Ask, in a call of its own, what the question needs counted -- then count it.
 
     The obvious shape is to hand the model the tool alongside the records and let
-    it call and answer in one conversation. That costs the records twice, since a
-    follow-up call resends them, and two of those blow the free tier's 8k tokens
-    per minute on their own. Here the deciding call carries the question and
-    nothing else, so the records are sent exactly once, in the call that answers.
+    it call and answer in one conversation. That sends the records twice, since a
+    follow-up call resends them -- twice the tokens, twice the cost, and a slower
+    answer. Here the deciding call carries the question and nothing else, so the
+    records are sent exactly once, in the call that answers.
     """
     prompt = COUNTING_PROMPT.format(today=today, query=query)
     response = client().chat.completions.create(
@@ -169,12 +157,13 @@ def _turns_text(turns) -> str:
 def synthesize_answer(
     query: str,
     cluster: list[dict],
-    model: str = 'openai/gpt-oss-120b',
+    model: str | None = None,
     now: datetime | None = None,
     conn=None,
     turns=None,
     search_text: str | None = None,
 ) -> Answer:
+    model = model or default_model()
     context = format_cluster_from_prompt(cluster)
     # without this "yesterday" and "this week" have nothing to be measured from, and
     # the model guesses a date out of its training data instead
@@ -236,8 +225,8 @@ def _answer(prompt: str, model: str) -> str:
         # gpt-oss reasons before it answers out of this same budget. Asking for two
         # answers pushed it far enough that a whole 2000-token budget could go to
         # reasoning and come back with empty content, so the reasoning is capped
-        # rather than the cap simply raised -- raising it alone would blow the
-        # free tier's 8k tokens-per-minute limit instead.
+        # rather than the cap simply raised. What is paid for is what is used, so
+        # this is a ceiling against a runaway answer rather than a budget.
         max_tokens=2500,
         reasoning_effort="low",
         # counting the same records twice should give the same answer twice

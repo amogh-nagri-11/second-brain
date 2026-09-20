@@ -19,9 +19,9 @@ from src.synthesis.rewrite import standalone_question
 # clusters mean k clusters is only k records, and MAX_CONTEXT_RECORDS is the real budget.
 TOP_K_CLUSTERS = 15
 # ceiling on records handed to the model, so a big cluster can't blow up the prompt
-# (and, on the free Groq tier, can't trip the 8k tokens-per-minute limit). Counting
-# needs breadth, so most of this budget is spent on one-line entries -- only the
-# best-ranked few carry their full text.
+# -- what is sent is what is paid for, and a longer prompt is a slower answer.
+# Counting needs breadth, so most of this budget is spent on one-line entries --
+# only the best-ranked few carry their full text.
 MAX_CONTEXT_RECORDS = 60
 DETAILED_RECORDS = 18
 
@@ -100,7 +100,8 @@ def retrieve(
 
 
 def _retry_hint(error) -> str:
-    """Groq says when to come back; pass that on rather than a bare apology."""
+    """Some providers say when to come back, in the message text; pass that on when
+    they do. Most don't, so the general reply is the common path."""
     match = re.search(r"try again in ([\w.]+)", str(error))
     return f"Try again in {match.group(1)}." if match else "Try again in a minute."
 
@@ -134,13 +135,18 @@ def get_answer(query_text: str, turns=None) -> Answer:
                 query_text, context, conn=conn, turns=turns or [], search_text=search_text
             )
         except MissingCredential as error:
-            return Answer(spoken="I need a Groq API key before I can answer", written=str(error))
-        except RateLimitError as error:
-            # the free tier allows 8k tokens a minute and 200k a day, and a flurry
-            # of questions reaches either. Saying so is more use than a 500
             return Answer(
-                spoken=f"I've hit the Groq rate limit. {_retry_hint(error)}",
-                written=f"Groq rate limit reached.\n\n{error}",
+                spoken="I need an API key before I can answer",
+                written=f"{error}\n\nOr point it somewhere else:"
+                        " python -m src.config.settings llm_base_url <url>",
+            )
+        except RateLimitError as error:
+            # whoever is actually serving the model can still throttle or run out
+            # of credit, and this is the one place that turns a 500 into something
+            # worth hearing
+            return Answer(
+                spoken=f"The model provider turned me down -- rate limit or credit. {_retry_hint(error)}",
+                written=f"Rate limited by the model provider.\n\n{error}",
             )
     finally:
         conn.close()

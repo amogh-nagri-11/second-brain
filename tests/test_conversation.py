@@ -50,21 +50,21 @@ class RewriteTests(unittest.TestCase):
         turns = [mock.Mock(question="how many PRs on other projects?", spoken="Thirty-two.")]
         reply = mock.Mock(choices=[mock.Mock(message=mock.Mock(
             content="how many of my pull requests on other people's projects are merged?"))])
-        with mock.patch("src.synthesis.answer.client") as client:
+        with mock.patch("src.synthesis.llm.client") as client:
             client().chat.completions.create.return_value = reply
             got = rewrite.standalone_question("how many of those merged?", turns)
         self.assertEqual(got, "how many of my pull requests on other people's projects are merged?")
 
     def test_a_failed_rewrite_falls_back_to_the_question(self):
         turns = [mock.Mock(question="q", spoken="a")]
-        with mock.patch("src.synthesis.answer.client") as client:
-            client().chat.completions.create.side_effect = RuntimeError("groq is down")
+        with mock.patch("src.synthesis.llm.client") as client:
+            client().chat.completions.create.side_effect = RuntimeError("the model provider is down")
             self.assertEqual(rewrite.standalone_question("how many of those?", turns), "how many of those?")
 
     def test_a_rambling_rewrite_is_not_trusted(self):
         turns = [mock.Mock(question="q", spoken="a")]
         reply = mock.Mock(choices=[mock.Mock(message=mock.Mock(content="here is the answer: " + "x" * 500))])
-        with mock.patch("src.synthesis.answer.client") as client:
+        with mock.patch("src.synthesis.llm.client") as client:
             client().chat.completions.create.return_value = reply
             self.assertEqual(rewrite.standalone_question("how many of those?", turns), "how many of those?")
 
@@ -125,7 +125,7 @@ class RateLimitTests(unittest.TestCase):
 
         import src.pipeline as pipeline
 
-        # shaped like the real thing: groq puts the wait in the message text
+        # shaped like a real 429, including a provider that says when to come back
         error = RateLimitError(
             "Error code: 429 - Rate limit reached on tokens per day (TPD): Limit 200000."
             " Please try again in 8m8.159999999s.",

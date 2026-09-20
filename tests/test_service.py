@@ -110,7 +110,7 @@ class BrainTests(unittest.TestCase):
 
     def test_failed_answer_clears_thinking(self):
         def broken(_q, **kwargs):
-            raise RuntimeError("groq down")
+            raise RuntimeError("the model provider is down")
         brain = self.brain()
         brain._ask = broken
         with self.assertRaises(RuntimeError):

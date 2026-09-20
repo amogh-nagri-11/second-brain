@@ -45,13 +45,15 @@ def _as_text(turns) -> str:
     return "\n".join(lines)
 
 
-def standalone_question(question: str, turns, model: str = "openai/gpt-oss-120b") -> str:
+def standalone_question(question: str, turns, model: str | None = None) -> str:
     """The question as retrieval should see it. Falls back to the question as asked:
     a bad rewrite is worse than none, and so is failing the whole answer over one."""
     if not turns:
         return question
 
-    from src.synthesis.answer import client
+    from src.synthesis.llm import client, model as default_model
+
+    model = model or default_model()
 
     try:
         response = client().chat.completions.create(

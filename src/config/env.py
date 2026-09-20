@@ -1,7 +1,7 @@
 """Credentials, looked up only when the thing that needs them runs.
 
 Nothing is required at import: someone who only uses the calendar shouldn't need
-a GitHub token to ask a question, and a missing Groq key should say so rather than
+a GitHub token to ask a question, and a missing API key should say so rather than
 stop the app starting.
 
 Each is looked for in order:
@@ -10,7 +10,7 @@ Each is looked for in order:
   3. a .env file in the app folder, then in the repo root
 
     python -m src.config.env status            which are set, and where from
-    python -m src.config.env set GROQ_API_KEY  store one in the keychain
+    python -m src.config.env set OPENROUTER_API_KEY   store one in the keychain
     python -m src.config.env import-env        copy what .env has into the keychain
 """
 
@@ -29,7 +29,7 @@ KEYRING_SERVICE = "SecondBrain"
 
 KNOWN = {
     "GITHUB_TOKEN": "GitHub personal access token, repo scope",
-    "GROQ_API_KEY": "Groq API key, from console.groq.com",
+    "OPENROUTER_API_KEY": "OpenRouter API key, from openrouter.ai/keys",
 }
 
 
@@ -87,8 +87,9 @@ def github_token() -> str:
     return require("GITHUB_TOKEN")
 
 
-def groq_api_key() -> str:
-    return require("GROQ_API_KEY")
+def llm_api_key() -> str:
+    """Whoever answers questions. OpenRouter by default -- see src.synthesis.llm."""
+    return require("OPENROUTER_API_KEY")
 
 
 def _main(argv: list[str]) -> int:

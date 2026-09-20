@@ -114,7 +114,9 @@ uv run python -m src.config.settings llm_base_url https://api.groq.com/openai/v1
 ```
 
 The default is `openai/gpt-oss-120b` through OpenRouter — the model the prompts
-were written against. It reasons out of the same budget it answers from, which is
+were written against. OpenRouter also serves `:free` models (50 requests a day,
+no credits needed); not all of them honour the SPOKEN/WRITTEN markers, so check a
+new one against a real question before keeping it. It reasons out of the same budget it answers from, which is
 why `max_tokens` is where it is; a different model is worth re-checking against
 `python -m src.eval.retrieval` and a few real questions. Changes take effect when
 the service restarts.

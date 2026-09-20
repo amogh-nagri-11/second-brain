@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from dateutil import parser as date_parser
 
-from openai import RateLimitError
+from openai import APIConnectionError, APIStatusError, RateLimitError
 
 from src.config.env import MissingCredential
 from src.embeddings.provider import get_embedder
@@ -106,6 +106,20 @@ def _retry_hint(error) -> str:
     return f"Try again in {match.group(1)}." if match else "Try again in a minute."
 
 
+# what a refusal from the provider actually means, in words worth hearing
+_REFUSALS = {
+    401: "my API key isn't being accepted",
+    402: "the account is out of credit",
+    403: "this account isn't allowed to use that model",
+    404: "that model doesn't exist at this provider",
+}
+
+
+def _refusal(error: "APIStatusError") -> str:
+    reason = _REFUSALS.get(error.status_code, f"it returned {error.status_code}")
+    return f"The model provider refused: {reason}. Check: python -m src.config.settings"
+
+
 def get_answer(query_text: str, turns=None) -> Answer:
     """Answer a question, optionally as the next turn of a conversation.
 
@@ -147,6 +161,16 @@ def get_answer(query_text: str, turns=None) -> Answer:
             return Answer(
                 spoken=f"The model provider turned me down -- rate limit or credit. {_retry_hint(error)}",
                 written=f"Rate limited by the model provider.\n\n{error}",
+            )
+        except APIStatusError as error:
+            # a refusal, not a rate limit: a key that isn't accepted, no credit
+            # left, a model this account may not use. Every one of these used to
+            # reach the window as a bare 500
+            return Answer(spoken=_refusal(error), written=f"{_refusal(error)}\n\n{error}")
+        except APIConnectionError as error:
+            return Answer(
+                spoken="I couldn't reach the model provider -- check the network.",
+                written=f"Couldn't reach the model provider.\n\n{error}",
             )
     finally:
         conn.close()

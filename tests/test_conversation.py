@@ -142,5 +142,49 @@ class RateLimitTests(unittest.TestCase):
         self.assertIn("8m8.159999999s", answer.spoken)
 
 
+class ProviderRefusalTests(unittest.TestCase):
+    """Every one of these used to reach the window as a bare 500."""
+
+    def refusal(self, status: int):
+        from openai import APIStatusError
+
+        import src.pipeline as pipeline
+
+        error = APIStatusError(
+            "refused", response=mock.Mock(status_code=status, headers={}, request=mock.Mock()), body=None
+        )
+        with mock.patch.object(pipeline, "get_clusters", return_value=[[{"id": "a"}]]), \
+             mock.patch.object(pipeline, "retrieve", return_value=([{"id": "a"}], [])), \
+             mock.patch.object(pipeline, "standalone_question", side_effect=lambda q, turns: q), \
+             mock.patch.object(pipeline, "synthesize_answer", side_effect=error):
+            return pipeline.get_answer("how many?")
+
+    def test_a_rejected_key_says_so(self):
+        self.assertIn("key isn't being accepted", self.refusal(401).spoken)
+
+    def test_no_credit_says_so(self):
+        self.assertIn("out of credit", self.refusal(402).spoken)
+
+    def test_a_model_this_account_cannot_use_says_so(self):
+        # openrouter gates some free models to "agentic harnesses" with a 403
+        self.assertIn("isn't allowed to use that model", self.refusal(403).spoken)
+
+    def test_an_unknown_status_still_answers(self):
+        self.assertIn("returned 418", self.refusal(418).spoken)
+
+    def test_an_unreachable_provider_says_so(self):
+        from openai import APIConnectionError
+
+        import src.pipeline as pipeline
+
+        with mock.patch.object(pipeline, "get_clusters", return_value=[[{"id": "a"}]]), \
+             mock.patch.object(pipeline, "retrieve", return_value=([{"id": "a"}], [])), \
+             mock.patch.object(pipeline, "standalone_question", side_effect=lambda q, turns: q), \
+             mock.patch.object(pipeline, "synthesize_answer",
+                               side_effect=APIConnectionError(request=mock.Mock())):
+            answer = pipeline.get_answer("how many?")
+        self.assertIn("couldn't reach", answer.spoken)
+
+
 if __name__ == "__main__":
     unittest.main()

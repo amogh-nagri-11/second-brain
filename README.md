@@ -257,6 +257,13 @@ src/
 - **Counts are written out, not handed over as JSON.** Given `{"total": 30}` the
   model would answer 29: it treated the number as something to check against the
   items. A sentence saying the count is final is followed.
+- **A named repository settles whose it is.** Asked about `huggingface/peft`
+  the model would add "my own repos" to the count and find nothing, so a repo in
+  the question drops any ownership filter — and it matches written either way,
+  `peft` or `huggingface/peft`.
+- **"Opened this month" and "merged this month" are different questions.** A pull
+  request is stored at the moment it merged, so a date range can be measured
+  against when it was opened instead.
 - **Counting asks the database, not the model.** Retrieval hands the model the
   best-matching records, never the whole store, so counting those gave a total
   that looked complete and wasn't. A question that turns on a number now runs a

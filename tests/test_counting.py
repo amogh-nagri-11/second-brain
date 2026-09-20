@@ -24,7 +24,8 @@ def pr(number, ownership="external", state="merged", repo="peft", days_ago=3):
         timestamp=(NOW - timedelta(days=days_ago)).isoformat(),
         title=f"{repo} #{number} ({state}): something",
         body="",
-        fields={"repo": repo, "state": state, "ownership": ownership, "merged": state == "merged"},
+        fields={"repo": repo, "full_name": f"x/{repo}", "state": state, "ownership": ownership,
+                "merged": state == "merged"},
     )
 
 
@@ -72,6 +73,40 @@ class TallyTests(unittest.TestCase):
         recent = pr(9, days_ago=0)
         db.save_item(self.conn, recent, chunks(recent))
         self.assertEqual(db.tally(self.conn, {"kind": "pr"}, until=today)["total"], 6)
+
+    def test_a_repo_is_matched_either_way_round(self):
+        # the model writes the repository the way the question did
+        self.assertEqual(db.tally(self.conn, {"repo": "x/peft"})["total"], 4)
+        self.assertEqual(db.tally(self.conn, {"repo": "peft"})["total"], 4)
+
+    def test_a_named_repo_overrides_a_guessed_ownership(self):
+        # asked about someone else's repo the model adds ownership="own", which
+        # would count nothing; the repo already says whose it is
+        self.assertEqual(db.tally(self.conn, {"repo": "peft", "ownership": "own"})["total"], 4)
+
+    def test_dates_can_be_measured_against_when_it_was_opened(self):
+        late = ActivityRecord(
+            id="github:pr:x/slow#99", source="github", kind="pr",
+            # opened in June, merged in September -- it is stored at the merge
+            timestamp="2026-09-10T00:00:00+00:00", title="slow #99 (merged): late", body="",
+            fields={"repo": "slow", "state": "merged", "ownership": "external", "merged": True,
+                    "opened_at": "2026-06-01T00:00:00Z", "merged_at": "2026-09-10T00:00:00Z"},
+        )
+        db.save_item(self.conn, late, chunks(late))
+        window = {"since": "2026-09-01", "until": "2026-09-30"}
+
+        self.assertEqual(db.tally(self.conn, {"repo": "slow"}, **window, dates="merged")["total"], 1)
+        self.assertEqual(db.tally(self.conn, {"repo": "slow"}, **window, dates="happened")["total"], 1)
+        # asked when it was opened, September is not when
+        self.assertEqual(db.tally(self.conn, {"repo": "slow"}, **window, dates="opened")["total"], 0)
+
+    def test_an_item_with_no_opened_time_falls_back_to_when_it_happened(self):
+        # commits and calendar events have no "opened_at", and a date range asked
+        # of them must still find them
+        self.assertEqual(
+            db.tally(self.conn, {"repo": "peft"}, since="2000-01-01", dates="opened")["total"],
+            db.tally(self.conn, {"repo": "peft"})["total"],
+        )
 
     def test_deleted_items_are_not_counted(self):
         db.mark_deleted(self.conn, ["github:pr:x/peft#3"])

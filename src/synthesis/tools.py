@@ -12,6 +12,7 @@ import json
 from src.storage.db import tally
 
 KINDS = ["commit", "pr", "event"]
+DATES = ["happened", "opened", "merged"]
 STATES = ["merged", "open", "closed"]
 GROUPS = ["kind", "state", "ownership", "repo", "month", "branch"]
 
@@ -45,12 +46,30 @@ TOOL_SCHEMA = [
                     "ownership": {
                         "type": "string",
                         "enum": ["own", "external"],
-                        "description": "pull requests only: the user's own repos, or other people's projects",
+                        "description": (
+                            "pull requests only, and only when the question itself draws the "
+                            "distinction ('my own repos', 'other people's projects'). Leave it "
+                            "out whenever a repository is named -- the repository already says "
+                            "whose it is."
+                        ),
                     },
-                    "repo": {"type": "string", "description": "repository name, e.g. second-brain"},
+                    "repo": {
+                        "type": "string",
+                        "description": "repository, either way round: second-brain or huggingface/peft",
+                    },
                     "branch": {"type": "string", "description": "commits only: branch name"},
                     "since": {"type": "string", "description": "ISO date, inclusive, e.g. 2026-09-01"},
                     "until": {"type": "string", "description": "ISO date, inclusive"},
+                    "dates": {
+                        "type": "string",
+                        "enum": DATES,
+                        "description": (
+                            "which time since/until are measured against. 'happened' (the default) "
+                            "is when the item counts as having happened, which for a merged pull "
+                            "request is when it merged. Use 'opened' for when a pull request was "
+                            "opened, and 'merged' for when it merged."
+                        ),
+                    },
                     "group_by": {
                         "type": "string",
                         "enum": GROUPS,
@@ -65,6 +84,7 @@ TOOL_SCHEMA = [
 FILTER_NAMES = ("kind", "state", "ownership", "repo", "branch")
 
 
+
 def describe(result: dict) -> str:
     """A count, written out for the answering prompt.
 
@@ -77,6 +97,8 @@ def describe(result: dict) -> str:
         return f"A count could not be run: {result['error']}"
 
     counted = result.get("counted") or {}
+    # said back in the same words the count was asked in, so an answer can tell one
+    # count from another -- and see when the filters were not what it meant
     what = ", ".join(f"{name}={value}" for name, value in counted.items()) or "everything stored"
     lines = [f"Counted {what}: {result['total']}. This number is final -- state it as it is, do not re-derive it."]
 
@@ -109,6 +131,7 @@ def run_tool(conn, name: str, arguments: str) -> str:
         since=args.get("since"),
         until=args.get("until"),
         group_by=args.get("group_by"),
+        dates=args.get("dates") or "happened",
     )
     # the filters are echoed back so a second call with different ones can't be
     # confused for this one

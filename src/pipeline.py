@@ -1,6 +1,9 @@
+import re
 from datetime import datetime, timezone
 
 from dateutil import parser as date_parser
+
+from openai import RateLimitError
 
 from src.config.env import MissingCredential
 from src.embeddings.provider import get_embedder
@@ -96,6 +99,12 @@ def retrieve(
     return _context_records(results, ranked), [record for record, _score in ranked]
 
 
+def _retry_hint(error) -> str:
+    """Groq says when to come back; pass that on rather than a bare apology."""
+    match = re.search(r"try again in ([\w.]+)", str(error))
+    return f"Try again in {match.group(1)}." if match else "Try again in a minute."
+
+
 def get_answer(query_text: str, turns=None) -> Answer:
     """Answer a question, optionally as the next turn of a conversation.
 
@@ -126,5 +135,12 @@ def get_answer(query_text: str, turns=None) -> Answer:
             )
         except MissingCredential as error:
             return Answer(spoken="I need a Groq API key before I can answer", written=str(error))
+        except RateLimitError as error:
+            # the free tier allows 8k tokens a minute and 200k a day, and a flurry
+            # of questions reaches either. Saying so is more use than a 500
+            return Answer(
+                spoken=f"I've hit the Groq rate limit. {_retry_hint(error)}",
+                written=f"Groq rate limit reached.\n\n{error}",
+            )
     finally:
         conn.close()

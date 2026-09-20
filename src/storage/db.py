@@ -507,6 +507,15 @@ TALLY_FIELDS = {
     "month": "SUBSTR(occurred_at, 1, 7)",
 }
 
+# which time a date range is measured against. An item is stored at the moment it
+# counts as having happened -- a pull request at the moment it merged -- so "opened
+# in September" has to be asked of the opening time, not of that one
+TALLY_DATES = {
+    "happened": "occurred_at",
+    "opened": "COALESCE(json_extract(fields, '$.opened_at'), occurred_at)",
+    "merged": "json_extract(fields, '$.merged_at')",
+}
+
 
 def tally(
     conn: sqlite3.Connection,
@@ -514,6 +523,7 @@ def tally(
     since: str | None = None,
     until: str | None = None,
     group_by: str | None = None,
+    dates: str = "happened",
     limit: int = 40,
 ) -> dict:
     """Count stored items exactly, with the matches themselves.
@@ -526,20 +536,35 @@ def tally(
     where = ["deleted_at IS NULL"]
     params: list = []
 
-    for name, value in (filters or {}).items():
+    filters = dict(filters or {})
+
+    # a named repository already says whose it is, and the model guesses badly --
+    # asked about huggingface/peft it would add ownership="own" and count nothing
+    if filters.get("repo"):
+        filters.pop("ownership", None)
+
+    for name, value in filters.items():
         if name not in TALLY_FIELDS or value is None:
             continue
-        column = TALLY_FIELDS[name]
-        # repo names are compared lowercased on both sides; the rest are stored
-        # exactly as the source spells them
-        where.append(f"{column} = ?")
-        params.append(value.lower() if name == "repo" else value)
 
+        if name == "repo":
+            # a repo is named either way round -- "peft" or "huggingface/peft"
+            where.append(
+                "(LOWER(json_extract(fields, '$.repo')) = ?"
+                " OR LOWER(json_extract(fields, '$.full_name')) = ?)"
+            )
+            params.extend([value.lower(), value.lower()])
+            continue
+
+        where.append(f"{TALLY_FIELDS[name]} = ?")
+        params.append(value)
+
+    when = TALLY_DATES.get(dates, TALLY_DATES["happened"])
     if since:
-        where.append("occurred_at >= ?")
+        where.append(f"{when} >= ?")
         params.append(since)
     if until:
-        where.append("occurred_at <= ?")
+        where.append(f"{when} <= ?")
         # times are compared as text, so a bare date would cut the day it names off
         # at midnight and lose everything that happened during it -- "until today"
         # has to mean the end of today

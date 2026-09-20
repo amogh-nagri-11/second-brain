@@ -119,5 +119,28 @@ class BrainConversationTests(unittest.TestCase):
         self.assertTrue(self.brain.ask("second")["follow_up"])
 
 
+class RateLimitTests(unittest.TestCase):
+    def test_a_rate_limit_is_answered_not_raised(self):
+        from openai import RateLimitError
+
+        import src.pipeline as pipeline
+
+        # shaped like the real thing: groq puts the wait in the message text
+        error = RateLimitError(
+            "Error code: 429 - Rate limit reached on tokens per day (TPD): Limit 200000."
+            " Please try again in 8m8.159999999s.",
+            response=mock.Mock(status_code=429, headers={}),
+            body=None,
+        )
+        with mock.patch.object(pipeline, "get_clusters", return_value=[[{"id": "a"}]]), \
+             mock.patch.object(pipeline, "retrieve", return_value=([{"id": "a"}], [])), \
+             mock.patch.object(pipeline, "standalone_question", side_effect=lambda q, turns: q), \
+             mock.patch.object(pipeline, "synthesize_answer", side_effect=error):
+            answer = pipeline.get_answer("how many?")
+
+        self.assertIn("rate limit", answer.spoken.lower())
+        self.assertIn("8m8.159999999s", answer.spoken)
+
+
 if __name__ == "__main__":
     unittest.main()

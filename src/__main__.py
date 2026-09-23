@@ -7,7 +7,8 @@
     notes [path]        where notes are read from; pass a path to change it
     record [on|off]     start or stop listening; toggles with no argument --
                         this is the command to bind to a keyboard shortcut
-    stop                stop speaking
+    stop                stop the running service
+    hush                stop speaking, mid-answer
     sync                sync now
     status              is it running, and what is it doing
     open                open the window in your browser
@@ -57,7 +58,8 @@ def main(argv: list[str]) -> int:
     record = commands.add_parser("record", help="start, stop or toggle listening")
     record.add_argument("state", nargs="?", choices=["on", "off"])
 
-    commands.add_parser("stop", help="stop speaking")
+    commands.add_parser("stop", help="stop the running service")
+    commands.add_parser("hush", help="stop speaking, mid-answer")
     commands.add_parser("new", help="start a new topic; the next question stands alone")
 
     notes = commands.add_parser("notes", help="where your notes are read from")
@@ -93,8 +95,11 @@ def main(argv: list[str]) -> int:
             result = client.call("POST", "/api/record", {"recording": wanted})
             print("listening" if result["recording"] else "stopped")
 
-        elif args.command == "stop":
+        elif args.command == "hush":
             client.call("POST", "/api/stop")
+
+        elif args.command == "stop":
+            return _stop_service()
 
         elif args.command == "notes":
             return _notes(args)
@@ -128,6 +133,53 @@ def main(argv: list[str]) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    return 0
+
+
+def _stop_service() -> int:
+    """Stop a service started by hand.
+
+    `service stop` is for the one launchd/systemd runs; this is for a `serve` in a
+    terminal, which otherwise needed the process hunted down by hand. The pid is
+    in the service file, so there is nothing to hunt.
+    """
+    import os
+    import signal
+
+    from src.core import client
+
+    info = client.read_service_file()
+    if info is None:
+        print("not running")
+        return 0
+
+    pid = info.get("pid")
+    if not pid:
+        print("running, but the service file has no pid -- kill it with: pkill -f 'src serve'")
+        return 1
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # died without cleaning up after itself
+        client.service_file().unlink(missing_ok=True)
+        print("not running (stale service file removed)")
+        return 0
+    except PermissionError:
+        print(f"not allowed to stop pid {pid} -- it belongs to another user")
+        return 1
+
+    # SIGTERM lets it shut down cleanly and remove its own service file; waiting
+    # for that is how we know it is really gone rather than just asked to go
+    for _ in range(50):
+        if not client.is_running():
+            print(f"stopped (pid {pid})")
+            return 0
+        time.sleep(0.1)
+
+    os.kill(pid, signal.SIGKILL)
+    client.service_file().unlink(missing_ok=True)
+    print(f"killed (pid {pid}) -- it didn't stop when asked")
     return 0
 
 

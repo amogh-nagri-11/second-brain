@@ -227,7 +227,9 @@ python -m src ask "what did I ship this week?"   # prints the written answer
 python -m src ask --new "..."                    # ...ignoring recent questions
 python -m src new                                # forget the conversation so far
 python -m src record                             # start / stop listening
-python -m src status | sync | stop | open
+python -m src status | sync | open
+python -m src stop                               # stop the service
+python -m src hush                               # stop speaking, mid-answer
 ```
 
 ## Interfaces

@@ -1,4 +1,7 @@
 import json
+import os
+import signal
+import tempfile
 import unittest
 from unittest import mock
 
@@ -98,6 +101,57 @@ class ApiTests(unittest.TestCase):
 
     def test_events_need_the_token(self):
         self.assertEqual(self.client.get("/api/events").status_code, 401)
+
+
+class StoppingTests(unittest.TestCase):
+    """`stop` used to mean "stop speaking", so a service started by hand had to be
+    hunted down with pkill. The pid is in the service file."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        patch = mock.patch.dict(os.environ, {"SECOND_BRAIN_HOME": self._tmp.name})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_nothing_running_is_not_an_error(self):
+        from src.__main__ import _stop_service
+
+        self.assertEqual(_stop_service(), 0)
+
+    def test_it_asks_the_recorded_pid_to_stop(self):
+        from src.__main__ import _stop_service
+        from src.core import client
+
+        client.write_service_file(8765, "token")
+        signals = []
+        with mock.patch("os.kill", side_effect=lambda pid, sig: signals.append((pid, sig))), \
+             mock.patch.object(client, "is_running", return_value=False):
+            self.assertEqual(_stop_service(), 0)
+
+        self.assertEqual([sig for _pid, sig in signals], [signal.SIGTERM])
+
+    def test_a_service_that_will_not_stop_is_killed(self):
+        from src.__main__ import _stop_service
+        from src.core import client
+
+        client.write_service_file(8765, "token")
+        signals = []
+        with mock.patch("os.kill", side_effect=lambda pid, sig: signals.append(sig)), \
+             mock.patch.object(client, "is_running", return_value=True), \
+             mock.patch("time.sleep"):
+            _stop_service()
+
+        self.assertEqual(signals[-1], signal.SIGKILL)
+
+    def test_a_stale_service_file_is_cleaned_up(self):
+        from src.__main__ import _stop_service
+        from src.core import client
+
+        client.write_service_file(8765, "token")
+        with mock.patch("os.kill", side_effect=ProcessLookupError):
+            self.assertEqual(_stop_service(), 0)
+        self.assertIsNone(client.read_service_file())
 
 
 if __name__ == "__main__":

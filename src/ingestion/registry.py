@@ -13,6 +13,5 @@ from src.ingestion.notes import SOURCE as NOTES
 
 REGISTRY = Registry([GITHUB_COMMITS, GITHUB_PRS, CALENDAR, NOTES])
 
-
 def sources() -> Registry:
     return REGISTRY
